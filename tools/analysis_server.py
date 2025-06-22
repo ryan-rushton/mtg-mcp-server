@@ -1,144 +1,16 @@
-import httpx
-from typing import List, Optional
 from fastmcp import FastMCP
+import httpx
+from typing import List
 from collections import Counter, defaultdict
-from utils import search_card, format_card_info, SCRYFALL_API_BASE
+from utils import search_card
 
-# Initialize the FastMCP server
-mcp: FastMCP = FastMCP("MTG Card Lookup Server", dependencies=["httpx"])
-
-
-@mcp.tool()
-async def lookup_cards(card_names: List[str]) -> str:
-    """
-    Look up a list of Magic: The Gathering cards using Scryfall's database.
-
-    Args:
-        card_names (List[str]): List of card names to search for (fuzzy matching supported).
-
-    Returns:
-        str: Formatted string with card information for each card found.
-    """
-    if not card_names:
-        return "No card names provided."
-
-    async with httpx.AsyncClient() as client:
-        results = []
-        not_found = []
-
-        # Search for each card
-        for card_name in card_names:
-            card_data = await search_card(client, card_name.strip())
-            if card_data:
-                formatted_card = format_card_info(card_data)
-                results.append(formatted_card)
-            else:
-                not_found.append(card_name)
-
-    # Build the response
-    response_parts = []
-
-    if results:
-        response_parts.append("**Cards Found:**\n")
-        response_parts.extend([f"{result}\n---\n" for result in results])
-
-    if not_found:
-        response_parts.append(f"**Cards Not Found:** {', '.join(not_found)}")
-
-    return "\n".join(response_parts)
+analysis_server = FastMCP("MTG Analysis Server", dependencies=["httpx"])
 
 
-@mcp.tool()
-async def search_cards_by_criteria(
-    name: Optional[str] = None,
-    colors: Optional[str] = None,
-    type_line: Optional[str] = None,
-    mana_cost: Optional[int] = None,
-    limit: int = 10,
-) -> str:
-    """
-    Search for Magic: The Gathering cards using various criteria.
-
-    Args:
-        name (Optional[str]): Partial card name to search for.
-        colors (Optional[str]): Card colors (e.g., "red", "blue", "white", "black", "green").
-        type_line (Optional[str]): Card type (e.g., "creature", "instant", "sorcery").
-        mana_cost (Optional[int]): Converted mana cost.
-        limit (int): Maximum number of results to return (default: 10, max: 25).
-
-    Returns:
-        str: Formatted string with matching cards.
-    """
-    # Build the search query
-    query_parts = []
-
-    if name:
-        query_parts.append(f'name:"{name}"')
-    if colors:
-        query_parts.append(f"color:{colors}")
-    if type_line:
-        query_parts.append(f"type:{type_line}")
-    if mana_cost is not None:
-        query_parts.append(f"cmc:{mana_cost}")
-
-    if not query_parts:
-        return "No search criteria provided."
-
-    search_query = " ".join(query_parts)
-    limit = min(max(1, limit), 25)  # Clamp between 1 and 25
-
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                f"{SCRYFALL_API_BASE}/cards/search",
-                params={"q": search_query, "page": 1, "order": "name"},
-            )
-
-            if response.status_code == 404:
-                return f"No cards found matching criteria: {search_query}"
-
-            response.raise_for_status()
-            data = response.json()
-
-            cards = data.get("data", [])[:limit]
-
-            if not cards:
-                return f"No cards found matching criteria: {search_query}"
-
-            results = []
-            for card in cards:
-                formatted_card = format_card_info(card)
-                results.append(formatted_card)
-
-            result_text = f"**Search Results for:** {search_query}\n\n"
-            result_text += "\n---\n".join(results)
-
-            total_cards = data.get("total_cards", len(cards))
-            if total_cards > limit:
-                result_text += (
-                    f"\n\n*Showing {len(cards)} of {total_cards} total results*"
-                )
-
-            return result_text
-
-        except httpx.HTTPError as e:
-            return f"Error searching cards: {e}"
-
-
-@mcp.tool()
+@analysis_server.tool()
 async def calculate_mana_curve(card_names: List[str]) -> str:
-    """
-    Calculate the mana curve for a list of Magic: The Gathering cards.
-
-    Args:
-        card_names (List[str]): List of card names to analyze.
-
-    Returns:
-        str: Breakdown of the number of cards at each converted mana cost (CMC).
-    """
     if not card_names:
         return "No card names provided."
-
     async with httpx.AsyncClient() as client:
         cmc_counter = Counter()
         not_found = []
@@ -149,7 +21,6 @@ async def calculate_mana_curve(card_names: List[str]) -> str:
                 cmc_counter[cmc] += 1
             else:
                 not_found.append(card_name)
-
     result = ["**Mana Curve:**"]
     for cmc in sorted(cmc_counter):
         result.append(f"CMC {cmc}: {cmc_counter[cmc]}")
@@ -158,20 +29,10 @@ async def calculate_mana_curve(card_names: List[str]) -> str:
     return "\n".join(result)
 
 
-@mcp.tool()
+@analysis_server.tool()
 async def analyze_lands(card_names: List[str]) -> str:
-    """
-    Analyze the lands in a list of Magic: The Gathering cards.
-
-    Args:
-        card_names (List[str]): List of card names to analyze.
-
-    Returns:
-        str: Number of lands and the mana colors they can produce.
-    """
     if not card_names:
         return "No card names provided."
-
     async with httpx.AsyncClient() as client:
         land_count = 0
         color_production = defaultdict(int)
@@ -182,9 +43,7 @@ async def analyze_lands(card_names: List[str]) -> str:
                 type_line = card_data.get("type_line", "").lower()
                 if "land" in type_line:
                     land_count += 1
-                    # Check for color production in oracle text
                     oracle_text = card_data.get("oracle_text", "")
-                    # Simple regex for mana symbols: {W}, {U}, {B}, {R}, {G}
                     for color, symbol in zip(
                         ["White", "Blue", "Black", "Red", "Green"],
                         ["{W}", "{U}", "{B}", "{R}", "{G}"],
@@ -193,7 +52,6 @@ async def analyze_lands(card_names: List[str]) -> str:
                             color_production[color] += 1
             else:
                 not_found.append(card_name)
-
     result = [f"**Land Analysis:**\nTotal Lands: {land_count}"]
     for color in ["White", "Blue", "Black", "Red", "Green"]:
         result.append(f"{color} mana sources: {color_production[color]}")
@@ -202,35 +60,21 @@ async def analyze_lands(card_names: List[str]) -> str:
     return "\n".join(result)
 
 
-@mcp.tool()
+@analysis_server.tool()
 async def analyze_color_identity(card_names: List[str]) -> str:
-    """
-    Analyze the color identity distribution of a list of Magic: The Gathering cards.
-
-    Args:
-        card_names (List[str]): List of card names to analyze.
-
-    Returns:
-        str: Breakdown by individual colors and color combinations.
-    """
     if not card_names:
         return "No card names provided."
-
     async with httpx.AsyncClient() as client:
         color_counts = defaultdict(int)
         total_colored_cards = 0
         colorless_count = 0
         not_found = []
-
-        # Color mapping for easier processing
         color_map = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
-
         for card_name in card_names:
             card_data = await search_card(client, card_name.strip())
             if card_data:
                 color_identity = card_data.get("color_identity", [])
                 if color_identity:
-                    # Sort colors for consistent representation
                     colors_key = "".join(sorted(color_identity))
                     color_counts[colors_key] += 1
                     total_colored_cards += 1
@@ -238,176 +82,118 @@ async def analyze_color_identity(card_names: List[str]) -> str:
                     colorless_count += 1
             else:
                 not_found.append(card_name)
-
     total_cards = total_colored_cards + colorless_count
     result = ["**Color Identity Analysis:**"]
     result.append(f"Total Cards Analyzed: {total_cards}")
-
     if colorless_count > 0:
         percentage = (colorless_count / total_cards) * 100
         result.append(f"Colorless: {colorless_count} ({percentage:.1f}%)")
-
-    # Sort by frequency, then alphabetically
     sorted_colors = sorted(color_counts.items(), key=lambda x: (-x[1], x[0]))
-
     for color_combo, count in sorted_colors:
-        # Convert single letters to full color names
         color_names = [color_map[c] for c in color_combo]
         color_display = (
             "/".join(color_names) if len(color_names) > 1 else color_names[0]
         )
         percentage = (count / total_cards) * 100
         result.append(f"{color_display}: {count} ({percentage:.1f}%)")
-
-    # Individual color presence (cards that contain each color)
     individual_colors = defaultdict(int)
     for color_combo, count in color_counts.items():
         for color in color_combo:
             individual_colors[color] += count
-
     result.append("\n**Individual Color Presence:**")
     for color_code in ["W", "U", "B", "R", "G"]:
         if color_code in individual_colors:
             count = individual_colors[color_code]
             percentage = (count / total_cards) * 100
             result.append(f"{color_map[color_code]}: {count} cards ({percentage:.1f}%)")
-
     if not_found:
         result.append(f"\n**Cards Not Found:** {', '.join(not_found)}")
-
     return "\n".join(result)
 
 
-@mcp.tool()
+@analysis_server.tool()
 async def analyze_mana_requirements(card_names: List[str]) -> str:
-    """
-    Analyze mana requirements vs mana production for deck building.
-
-    Args:
-        card_names (List[str]): List of card names to analyze.
-
-    Returns:
-        str: Spell color requirements vs land color production analysis.
-    """
     if not card_names:
         return "No card names provided."
-
     async with httpx.AsyncClient() as client:
-        # Track spell requirements and land production separately
         spell_color_counts = defaultdict(int)
         land_color_production = defaultdict(int)
         spell_total = 0
         land_total = 0
         not_found = []
-
         color_map = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
-
         for card_name in card_names:
             card_data = await search_card(client, card_name.strip())
             if card_data:
                 type_line = card_data.get("type_line", "").lower()
                 color_identity = card_data.get("color_identity", [])
-
                 if "land" in type_line:
-                    # For lands, check what colors they can produce
                     land_total += 1
                     oracle_text = card_data.get("oracle_text", "")
-
-                    # Check for mana symbols in oracle text
                     for color_code, color_name in color_map.items():
                         if f"{{{color_code}}}" in oracle_text:
                             land_color_production[color_code] += 1
                 else:
-                    # For non-lands, count color requirements
                     if color_identity:
                         spell_total += 1
                         for color in color_identity:
                             spell_color_counts[color] += 1
             else:
                 not_found.append(card_name)
-
     total_cards = spell_total + land_total
-
     result = ["**Mana Requirements vs Production Analysis:**"]
     result.append(
         f"Total Cards: {total_cards} (Spells: {spell_total}, Lands: {land_total})"
     )
-
-    # Show color requirements vs production
     result.append("\n**Color Requirements vs Land Production:**")
     for color_code in ["W", "U", "B", "R", "G"]:
         color_name = color_map[color_code]
         spell_req = spell_color_counts[color_code]
         land_prod = land_color_production[color_code]
-
         if spell_req > 0 or land_prod > 0:
             ratio = f"{land_prod}/{spell_req}" if spell_req > 0 else f"{land_prod}/0"
             status = ""
-
             if spell_req > 0:
                 if land_prod == 0:
                     status = " ⚠️ NO SOURCES!"
-                elif land_prod < spell_req * 0.3:  # Less than 30% coverage
+                elif land_prod < spell_req * 0.3:
                     status = " ⚠️ Low sources"
-                elif land_prod >= spell_req * 0.5:  # 50%+ coverage is good
+                elif land_prod >= spell_req * 0.5:
                     status = " ✓ Good coverage"
                 else:
                     status = " ⚡ Moderate coverage"
-
             result.append(f"{color_name}: {ratio} sources{status}")
-
-    # Calculate total color requirements
     total_color_requirements = sum(spell_color_counts.values())
-
     result.append("\n**Summary:**")
     result.append(f"Total color requirements: {total_color_requirements}")
     result.append(f"Colored mana sources: {sum(land_color_production.values())}")
-
     if total_color_requirements > 0:
         coverage_ratio = sum(land_color_production.values()) / total_color_requirements
         result.append(f"Overall coverage ratio: {coverage_ratio:.2f}")
-
         if coverage_ratio < 0.3:
             result.append("⚠️ Very low mana base coverage - add more colored sources")
         elif coverage_ratio < 0.5:
             result.append("⚡ Moderate mana base - consider adding more sources")
         else:
             result.append("✓ Good mana base coverage")
-
     if not_found:
         result.append(f"\n**Cards Not Found:** {', '.join(not_found)}")
-
     return "\n".join(result)
 
 
-@mcp.tool()
+@analysis_server.tool()
 async def analyze_card_types(card_names: List[str]) -> str:
-    """
-    Analyze the card type distribution of a list of Magic: The Gathering cards.
-
-    Args:
-        card_names (List[str]): List of card names to analyze.
-
-    Returns:
-        str: Breakdown by primary card types and detailed subtypes.
-    """
     if not card_names:
         return "No card names provided."
-
     async with httpx.AsyncClient() as client:
         type_counts = defaultdict(int)
         detailed_types = defaultdict(int)
         not_found = []
-
         for card_name in card_names:
             card_data = await search_card(client, card_name.strip())
             if card_data:
                 type_line = card_data.get("type_line", "")
-
-                # Extract primary types (before any " — " subtype separator)
                 primary_types = type_line.split(" — ")[0].strip()
-
-                # Count each primary type
                 for card_type in [
                     "Creature",
                     "Instant",
@@ -420,30 +206,20 @@ async def analyze_card_types(card_names: List[str]) -> str:
                 ]:
                     if card_type.lower() in primary_types.lower():
                         type_counts[card_type] += 1
-
-                # Also count detailed type line for reference
                 detailed_types[primary_types] += 1
             else:
                 not_found.append(card_name)
-
     total_cards = sum(type_counts.values())
-
     result = ["**Card Type Distribution:**"]
     result.append(f"Total Cards Analyzed: {total_cards}")
-
-    # Sort by count (descending)
     sorted_types = sorted(type_counts.items(), key=lambda x: -x[1])
-
     for card_type, count in sorted_types:
         if count > 0:
             percentage = (count / total_cards) * 100 if total_cards > 0 else 0
             result.append(f"{card_type}: {count} ({percentage:.1f}%)")
-
-    # Commander deck guidelines comparison
     result.append("\n**Commander Deck Guidelines:**")
     creature_count = type_counts.get("Creature", 0)
     land_count = type_counts.get("Land", 0)
-
     if creature_count > 0:
         if 30 <= creature_count <= 40:
             result.append(f"✓ Creatures ({creature_count}): Good range (30-40 typical)")
@@ -455,7 +231,6 @@ async def analyze_card_types(card_names: List[str]) -> str:
             result.append(
                 f"⚠ Creatures ({creature_count}): Above typical range (30-40)"
             )
-
     if land_count > 0:
         if 36 <= land_count <= 40:
             result.append(f"✓ Lands ({land_count}): Good range (36-40 typical)")
@@ -463,19 +238,11 @@ async def analyze_card_types(card_names: List[str]) -> str:
             result.append(f"⚠ Lands ({land_count}): Below typical range (36-40)")
         else:
             result.append(f"⚠ Lands ({land_count}): Above typical range (36-40)")
-
-    # Show most common detailed type lines
     result.append("\n**Most Common Type Lines:**")
     sorted_detailed = sorted(detailed_types.items(), key=lambda x: -x[1])[:8]
     for type_line, count in sorted_detailed:
-        if count > 1:  # Only show types that appear more than once
+        if count > 1:
             result.append(f"{type_line}: {count}")
-
     if not_found:
         result.append(f"\n**Cards Not Found:** {', '.join(not_found)}")
-
     return "\n".join(result)
-
-
-if __name__ == "__main__":
-    mcp.run()
