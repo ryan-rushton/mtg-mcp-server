@@ -8,5 +8,6 @@ dependencies = ["fastmcp>=2.8.1"]
 
 [dependency-groups]
 dev = [
+    "mypy>=1.16.1",
     "ruff>=0.12.0",
 ]
