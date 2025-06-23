@@ -8,6 +8,9 @@ SCRYFALL_API_BASE = "https://api.scryfall.com"
 # In-memory cache for card data
 card_cache: Dict[str, Dict[str, Any]] = {}
 
+# Cache for search results to avoid repeated API calls
+search_cache: Dict[str, Dict[str, Any]] = {}
+
 
 async def search_card(
     client: httpx.AsyncClient, card_name: str
@@ -32,6 +35,43 @@ async def search_card(
     except httpx.HTTPError as e:
         print(f"Error searching for card '{card_name}': {e}")
         return None
+
+
+def cache_card_data(card_data: Dict[str, Any]) -> None:
+    """Cache card data for future lookups."""
+    if "name" in card_data:
+        cache_key = card_data["name"].strip().lower()
+        card_cache[cache_key] = card_data
+
+
+async def get_cached_card(client: httpx.AsyncClient, card_name: str) -> Optional[Dict[str, Any]]:
+    """Get card from cache or fetch and cache it."""
+    cache_key = card_name.strip().lower()
+    
+    # Check cache first
+    if cache_key in card_cache:
+        return card_cache[cache_key]
+    
+    # Fetch and cache
+    try:
+        response = await client.get(
+            f"{SCRYFALL_API_BASE}/cards/named", 
+            params={"fuzzy": card_name}
+        )
+        if response.status_code == 200:
+            card_data = response.json()
+            cache_card_data(card_data)
+            return card_data
+        elif response.status_code == 404:
+            # Cache negative results to avoid repeated lookups
+            card_cache[cache_key] = None
+            return None
+        else:
+            response.raise_for_status()
+    except httpx.HTTPError as e:
+        print(f"Error fetching card '{card_name}': {e}")
+    
+    return None
 
 
 def format_card_info(card_data: Dict[str, Any]) -> str:

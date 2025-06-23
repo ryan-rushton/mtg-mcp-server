@@ -149,3 +149,108 @@ async def test_empty_card_names_analysis_tools(client):
         result = await client.call_tool(tool_name, {"card_names": []})
         response = result[0].text
         assert response == "No card names provided.", f"Tool {tool_name} failed empty input test"
+
+
+async def test_commander_deck_analysis_balanced(client):
+    """Test commander deck analysis with well-balanced categories."""
+    result = await client.call_tool(
+        "analysis_analyze_commander_deck",
+        {
+            "ramp": ["Sol Ring", "Cultivate", "Rampant Growth", "Llanowar Elves", "Birds of Paradise", 
+                    "Kodama's Reach", "Farseek", "Nature's Lore", "Three Visits", "Sakura-Tribe Elder"],
+            "card_advantage": ["Rhystic Study", "Phyrexian Arena", "Sylvan Library", "The Great Henge",
+                              "Beast Whisperer", "Guardian Project", "Harmonize", "Divination", 
+                              "Sign in Blood", "Read the Bones", "Night's Whisper", "Brainstorm"],
+            "targeted_disruption": ["Swords to Plowshares", "Path to Exile", "Lightning Bolt", "Counterspell",
+                                   "Assassin's Trophy", "Beast Within", "Chaos Warp", "Generous Gift",
+                                   "Rapid Hybridization", "Swan Song", "Negate", "Dispel"],
+            "mass_disruption": ["Wrath of God", "Day of Judgment", "Cyclonic Rift", "Austere Command",
+                               "Supreme Verdict", "Toxic Deluge"],
+            "lands": ["Command Tower", "Sol Ring"] + [f"Island {i}" for i in range(36)],  # 38 total
+            "plan_cards": ["Lightning Greaves", "Swiftfoot Boots"] + [f"Theme Card {i}" for i in range(28)]  # 30 total
+        }
+    )
+    
+    response = result[0].text
+    assert "**Command Zone Deck Analysis:**" in response
+    assert "**Ramp: 10 cards** ⚡" in response  # 10 meets minimum but 12+ is optimal
+    assert "**Card Advantage: 12 cards** ⚡" in response  # 12 meets minimum but 15+ is optimal
+    assert "**Targeted Disruption: 12 cards** ✓" in response
+    assert "**Mass Disruption: 6 cards** ✓" in response
+    assert "**Lands: 38 cards** ✓" in response
+    assert "**Plan Cards: 30 cards** ⚡" in response  # ~30 is target range
+    assert "✓ Excellent deck balance following Command Zone framework" in response
+
+
+async def test_commander_deck_analysis_imbalanced(client):
+    """Test commander deck analysis with imbalanced categories."""
+    result = await client.call_tool(
+        "analysis_analyze_commander_deck",
+        {
+            "ramp": ["Sol Ring", "Cultivate"],  # Only 2 instead of 10
+            "card_advantage": ["Rhystic Study"],  # Only 1 instead of 12
+            "targeted_disruption": ["Swords to Plowshares", "Path to Exile", "Lightning Bolt", "Counterspell"],  # 4 vs 12
+            "mass_disruption": ["Wrath of God", "Day of Judgment", "Cyclonic Rift", "Austere Command",
+                               "Supreme Verdict", "Toxic Deluge", "Damnation", "Cleansing Nova"],  # 8 vs 6
+            "lands": [f"Island {i}" for i in range(30)],  # 30 vs 38
+            "plan_cards": [f"Theme Card {i}" for i in range(50)]  # 50 vs 30
+        }
+    )
+    
+    response = result[0].text
+    assert "**Ramp: 2 cards** ⚠️" in response
+    assert "**Card Advantage: 1 cards** ⚠️" in response
+    assert "**Lands: 30 cards** ⚠️" in response  
+    assert "⚠️ Major structural issues" in response
+    assert "Priority Improvements:" in response
+
+
+async def test_commander_deck_analysis_empty_categories(client):
+    """Test commander deck analysis with some empty categories."""
+    result = await client.call_tool(
+        "analysis_analyze_commander_deck",
+        {
+            "ramp": ["Sol Ring", "Cultivate", "Rampant Growth"],
+            "lands": [f"Island {i}" for i in range(38)],
+            # Other categories left empty
+        }
+    )
+    
+    response = result[0].text
+    assert "**Ramp: 3 cards**" in response
+    assert "**Card Advantage: 0 cards**" in response
+    assert "**Lands: 38 cards** ✓" in response
+    assert "No cards provided in this category" in response
+
+
+async def test_commander_deck_analysis_overlapping_cards(client):
+    """Test commander deck analysis with cards in multiple categories."""
+    result = await client.call_tool(
+        "analysis_analyze_commander_deck",
+        {
+            "ramp": ["Sol Ring", "Cultivate"],
+            "card_advantage": ["Sol Ring", "Sylvan Library"],  # Sol Ring appears in both
+            "lands": ["Command Tower", "Island"]
+        }
+    )
+    
+    response = result[0].text
+    assert "Total Unique Cards: 5" in response  # Sol Ring, Cultivate, Sylvan Library, Command Tower, Island
+    assert "**Ramp: 2 cards**" in response
+    assert "**Card Advantage: 2 cards**" in response
+    assert "Sol Ring" in response
+
+
+async def test_commander_deck_analysis_wrong_total(client):
+    """Test commander deck analysis with wrong total card count."""
+    result = await client.call_tool(
+        "analysis_analyze_commander_deck",
+        {
+            "ramp": ["Sol Ring"],
+            "lands": ["Island"]
+        }
+    )
+    
+    response = result[0].text
+    assert "Total Unique Cards: 2" in response
+    assert "⚠️ Total cards (2) should equal 100 for Commander format" in response

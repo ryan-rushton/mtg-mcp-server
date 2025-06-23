@@ -2,10 +2,148 @@ from fastmcp import FastMCP
 import httpx
 from typing import List
 from collections import Counter, defaultdict
-from .utils import search_card
+from .utils import get_cached_card
 from .scryfall_server import batch_lookup_cards
 
 analysis_server: FastMCP = FastMCP("MTG Analysis Server", dependencies=["httpx"])
+
+# Add Command Zone template as a resource
+@analysis_server.resource("file://command-zone-template")
+def get_command_zone_template() -> str:
+    """
+    The official Command Zone podcast deckbuilding template for Commander decks.
+    
+    This resource provides the complete framework for building balanced, functional
+    Commander decks with proper interaction and consistency.
+    """
+    try:
+        with open("COMMAND_ZONE_TEMPLATE.md", "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        return """# Command Zone Template (Fallback)
+        
+## Core Categories:
+- **Lands**: 38 (includes MDFCs, utility lands, land cyclers)
+- **Card Advantage**: 12+ (true draw, impulse, exile-to-play)
+- **Ramp**: 10-12+ (mana acceleration beyond land drops)
+- **Targeted Disruption**: 12 (removal, counters, bounce, graveyard hate)
+- **Mass Disruption**: 6 (wraths, artifact wipes, fogs, stax)
+- **Plan/Synergy Cards**: ~30 (win conditions, synergy pieces, combos)
+
+## Key Principles:
+- Cards can overlap categories (MDFCs, ETB creatures, modal spells)
+- Template is a guideline - adjust after playtesting
+- Don't neglect fundamentals: ramp, draw, interaction, disruption
+"""
+
+# Add Command Zone deck building prompts
+@analysis_server.prompt("analyze-commander-deck")
+def analyze_commander_deck_prompt() -> str:
+    """
+    Prompt for analyzing a Commander deck against the Command Zone template.
+    
+    This prompt guides the LLM to properly categorize cards and identify
+    deck balance issues using the official Command Zone framework.
+    """
+    return """You are analyzing a Commander deck using the Command Zone podcast's deckbuilding template.
+
+## Your Task:
+1. Categorize each card into Command Zone categories (cards can fit multiple categories)
+2. Use the analysis_analyze_commander_deck tool with your categorizations
+3. Provide specific improvement suggestions based on the analysis
+
+## Command Zone Categories:
+- **Lands (38)**: All lands including MDFCs, utility lands, land cyclers
+- **Card Advantage (12+)**: True card draw, impulse draw, exile-to-play (NOT card selection like Faithless Looting)
+- **Ramp (10-12+)**: Mana acceleration beyond land drops (rocks, dorks, ramp spells - NOT temporary burst)
+- **Targeted Disruption (12)**: One-for-one answers (removal, counters, bounce, graveyard hate)
+- **Mass Disruption (6)**: Broad answers (wraths, artifact wipes, fogs, stax, Teferi's Protection)
+- **Plan/Synergy Cards (~30)**: Win conditions, synergy pieces, combos, flavor picks
+
+## Key Principles:
+- Look for overlap and efficiency (MDFCs, ETB creatures, modal spells)
+- Prioritize consistency - aim for higher counts in ramp/draw for reliability
+- Template is a guideline - adjust based on strategy and meta
+- Don't neglect fundamentals for flashy synergy pieces
+
+Categorize thoughtfully and explain your reasoning for borderline cards."""
+
+@analysis_server.prompt("suggest-deck-improvements")
+def suggest_deck_improvements_prompt() -> str:
+    """
+    Prompt for suggesting specific improvements to a Commander deck.
+    
+    This prompt helps the LLM provide actionable upgrade suggestions
+    based on Command Zone principles and deck analysis results.
+    """
+    return """You are suggesting improvements to a Commander deck based on Command Zone principles.
+
+## Analysis Process:
+1. First analyze the deck with the Command Zone template
+2. Identify the most critical gaps or imbalances
+3. Suggest specific cards to add/remove with clear reasoning
+4. Consider budget, power level, and deck theme
+
+## Improvement Priorities:
+1. **Fix Critical Gaps**: Missing ramp, draw, or interaction
+2. **Increase Efficiency**: Cards that serve multiple roles
+3. **Enhance Consistency**: More reliable card advantage and ramp
+4. **Optimize Mana Base**: Better fixing and utility lands
+5. **Strengthen Game Plan**: More focused synergy pieces
+
+## Suggestion Format:
+**Priority 1 - Critical:**
+- Add: [Specific cards] - Reason
+- Remove: [Specific cards] - Reason
+
+**Priority 2 - Optimization:**
+- Consider: [Alternative cards] - Benefits
+
+**Priority 3 - Long-term:**
+- Upgrade path: [Expensive improvements] - Impact
+
+Focus on the most impactful changes first."""
+
+@analysis_server.resource("file://commander-staples")
+def get_commander_staples() -> str:
+    """
+    List of commonly played Commander staples by category.
+    
+    This resource provides examples of popular cards in each Command Zone category
+    to help with deck building and card recommendations.
+    """
+    return """# Commander Staples by Category
+
+## Ramp (10-12+ cards)
+**Artifacts:** Sol Ring, Arcane Signet, Fellwar Stone, Talisman cycle, Signet cycle
+**Green Spells:** Cultivate, Kodama's Reach, Rampant Growth, Nature's Lore, Three Visits
+**Creatures:** Llanowar Elves, Birds of Paradise, Farhaven Elf, Wood Elves
+
+## Card Advantage (12+ cards)  
+**Enchantments:** Rhystic Study, Phyrexian Arena, Sylvan Library, Mystic Remora
+**Creatures:** Beast Whisperer, Guardian Project, Mentor of the Meek
+**Spells:** Harmonize, Sign in Blood, Read the Bones, Brainstorm
+
+## Targeted Disruption (12 cards)
+**Removal:** Swords to Plowshares, Path to Exile, Beast Within, Chaos Warp
+**Counters:** Counterspell, Swan Song, Negate, Dispel  
+**Versatile:** Assassin's Trophy, Generous Gift, Rapid Hybridization
+
+## Mass Disruption (6 cards)
+**Board Wipes:** Wrath of God, Day of Judgment, Blasphemous Act, Toxic Deluge
+**Protection:** Teferi's Protection, Boros Charm, Heroic Intervention
+**Utility:** Cyclonic Rift, Austere Command
+
+## Essential Lands
+**Fixing:** Command Tower, Exotic Orchard, Reflecting Pool
+**Utility:** Reliquary Tower, Ghost Quarter, Strip Mine
+**Budget:** Evolving Wilds, Terramorphic Expanse, basics
+
+## Utility/Staples
+**Protection:** Lightning Greaves, Swiftfoot Boots, Mother of Runes
+**Recursion:** Eternal Witness, Regrowth, Sun Titan
+**Card Selection:** Sensei's Divining Top, Scroll Rack
+"""
 
 
 @analysis_server.tool()
@@ -92,7 +230,7 @@ async def analyze_lands(card_names: List[str]) -> str:
         color_production: defaultdict[str, int] = defaultdict(int)
         not_found = []
         for card_name in card_names:
-            card_data = await search_card(client, card_name.strip())
+            card_data = await get_cached_card(client, card_name.strip())
             if card_data:
                 type_line = card_data.get("type_line", "").lower()
                 if "land" in type_line:
@@ -155,7 +293,7 @@ async def analyze_color_identity(card_names: List[str]) -> str:
         not_found = []
         color_map = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
         for card_name in card_names:
-            card_data = await search_card(client, card_name.strip())
+            card_data = await get_cached_card(client, card_name.strip())
             if card_data:
                 color_identity = card_data.get("color_identity", [])
                 if color_identity:
@@ -238,7 +376,7 @@ async def analyze_mana_requirements(card_names: List[str]) -> str:
         not_found = []
         color_map = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"}
         for card_name in card_names:
-            card_data = await search_card(client, card_name.strip())
+            card_data = await get_cached_card(client, card_name.strip())
             if card_data:
                 type_line = card_data.get("type_line", "").lower()
                 color_identity = card_data.get("color_identity", [])
@@ -297,6 +435,162 @@ async def analyze_mana_requirements(card_names: List[str]) -> str:
 
 
 @analysis_server.tool()
+async def analyze_commander_deck(
+    ramp: List[str] = None,
+    card_advantage: List[str] = None, 
+    targeted_disruption: List[str] = None,
+    mass_disruption: List[str] = None,
+    lands: List[str] = None,
+    plan_cards: List[str] = None
+) -> str:
+    """
+    Analyze a Commander deck using the official Command Zone deckbuilding template.
+    
+    This tool validates categorized cards against the Command Zone podcast's framework for
+    building balanced, functional Commander decks with proper interaction and consistency.
+    
+    Based on the official template:
+    - Lands (38): Includes MDFCs, utility lands, land cyclers - start at 38, adjust after testing
+    - Card Advantage (12+): True card draw, impulse draw, exile-to-play (NOT just card selection)
+    - Ramp (10-12+): Mana acceleration beyond land drops (rocks, dorks, ramp spells)
+    - Targeted Disruption (12): One-for-one answers (removal, counters, bounce, graveyard hate)
+    - Mass Disruption (6): Broad answers (wraths, artifact wipes, fogs, stax, protection)
+    - Plan/Synergy Cards (~30): Win conditions, synergy pieces, combos, flavor picks
+    
+    Cards can and should overlap categories for efficiency (MDFCs, ETB creatures, modal spells).
+    Template totals exceed 100 due to overlap - this is intentional and encouraged.
+    
+    Args:
+        ramp (List[str], optional): Mana acceleration beyond land drops (NOT temporary burst mana)
+        card_advantage (List[str], optional): True card advantage (draw, impulse, exile-to-play)
+        targeted_disruption (List[str], optional): One-for-one answers and targeted interaction
+        mass_disruption (List[str], optional): Broad answers affecting multiple permanents/players
+        lands (List[str], optional): All lands including MDFCs, utility lands, land cyclers
+        plan_cards (List[str], optional): Win conditions, synergy pieces, combo pieces, theme cards
+    
+    Returns:
+        str: Formatted analysis with Command Zone framework recommendations:
+             - Category breakdowns with official target ranges
+             - Efficiency and overlap analysis
+             - Specific improvement suggestions
+             - Balance assessment against proven template
+    """
+    # Initialize categories with Command Zone template targets
+    categories = {
+        "Ramp": {"cards": ramp or [], "target": 10, "target_range": "10-12+", "min_target": 10, "optimal_target": 12},
+        "Card Advantage": {"cards": card_advantage or [], "target": 12, "target_range": "12+", "min_target": 12, "optimal_target": 15},
+        "Targeted Disruption": {"cards": targeted_disruption or [], "target": 12, "target_range": "12", "min_target": 12, "optimal_target": 12},
+        "Mass Disruption": {"cards": mass_disruption or [], "target": 6, "target_range": "6", "min_target": 6, "optimal_target": 6},
+        "Lands": {"cards": lands or [], "target": 38, "target_range": "38", "min_target": 36, "optimal_target": 38},
+        "Plan Cards": {"cards": plan_cards or [], "target": 30, "target_range": "~30", "min_target": 25, "optimal_target": 35}
+    }
+    
+    # Calculate total unique cards (since cards can be in multiple categories)
+    all_cards = set()
+    for data in categories.values():
+        all_cards.update(data["cards"])
+    
+    total_cards = len(all_cards)
+    
+    # Build analysis result
+    result = ["**Command Zone Deck Analysis:**"]
+    result.append(f"Total Unique Cards: {total_cards}")
+    result.append("")
+    
+    # Analyze each category with Command Zone framework
+    total_variance = 0
+    problem_categories = []
+    efficiency_notes = []
+    
+    for category_name, data in categories.items():
+        count = len(data["cards"])
+        min_target = data["min_target"]
+        optimal_target = data["optimal_target"]
+        target_range = data["target_range"]
+        
+        # Determine status using Command Zone guidelines
+        status = ""
+        if count >= optimal_target:
+            status = " ✓"
+        elif count >= min_target:
+            status = " ⚡"
+        else:
+            status = " ⚠️"
+            problem_categories.append(f"{category_name} ({count} vs {target_range})")
+        
+        # Special handling for key categories
+        if category_name == "Card Advantage" and count >= 15:
+            status = " ✓"
+            efficiency_notes.append(f"Excellent card advantage consistency ({count} cards)")
+        elif category_name == "Ramp" and count >= 12:
+            status = " ✓" 
+            efficiency_notes.append(f"Strong ramp consistency ({count} cards)")
+        
+        variance = abs(count - min_target)
+        total_variance += variance
+        
+        result.append(f"**{category_name}: {count} cards**{status} (Target: {target_range})")
+        
+        # Show sample cards with more context
+        if data["cards"]:
+            card_sample = data["cards"][:6]  # Show more cards for better context
+            cards_text = ", ".join(card_sample)
+            if len(data["cards"]) > 6:
+                cards_text += f"... (+{len(data['cards']) - 6} more)"
+            result.append(f"  {cards_text}")
+        else:
+            result.append("  No cards provided in this category")
+        result.append("")
+    
+    # Overall assessment with Command Zone principles
+    result.append("**Overall Assessment:**")
+    
+    # Calculate how many categories meet minimum requirements
+    categories_meeting_min = sum(1 for data in categories.values() if len(data["cards"]) >= data["min_target"])
+    total_categories = len(categories)
+    
+    if categories_meeting_min == total_categories:
+        result.append("✓ Excellent deck balance following Command Zone framework")
+        result.append("All categories meet minimum requirements for functional gameplay")
+    elif categories_meeting_min >= total_categories - 1:
+        result.append("⚡ Strong deck foundation with minor gaps to address")
+    elif categories_meeting_min >= total_categories - 2:
+        result.append("⚡ Decent foundation but needs attention in key areas")
+    else:
+        result.append("⚠️ Major structural issues - deck may struggle with consistency")
+        result.append("Focus on fundamentals: ramp, draw, interaction, and lands")
+    
+    # Add efficiency highlights
+    if efficiency_notes:
+        result.append("\n**Efficiency Highlights:**")
+        for note in efficiency_notes:
+            result.append(f"✓ {note}")
+    
+    # Priority recommendations
+    if problem_categories:
+        result.append("\n**Priority Improvements:**")
+        for i, category in enumerate(problem_categories[:3], 1):  # Top 3 priorities
+            result.append(f"{i}. {category}")
+    
+    # Card overlap guidance
+    total_categorized_cards = sum(len(data["cards"]) for data in categories.values())
+    if total_categorized_cards > total_cards * 1.2:  # Good overlap
+        result.append("\n✓ Good card overlap - many cards serve multiple roles (recommended)")
+    elif total_categorized_cards < total_cards * 1.1:  # Low overlap
+        result.append("\n⚡ Consider cards that serve multiple roles (MDFCs, ETB creatures, modal spells)")
+    
+    # Commander format validation
+    if total_cards != 100:
+        result.append(f"\n⚠️ Total cards ({total_cards}) should equal 100 for Commander format")
+        if total_cards < 100:
+            result.append("Missing cards may indicate incomplete deck list")
+        else:
+            result.append("Excess cards need to be cut to 100")
+    
+    return "\n".join(result)
+
+
+@analysis_server.tool()
 async def analyze_card_types(card_names: List[str]) -> str:
     """
     Analyze the distribution of card types in a Magic: The Gathering deck.
@@ -340,7 +634,7 @@ async def analyze_card_types(card_names: List[str]) -> str:
         detailed_types: defaultdict[str, int] = defaultdict(int)
         not_found = []
         for card_name in card_names:
-            card_data = await search_card(client, card_name.strip())
+            card_data = await get_cached_card(client, card_name.strip())
             if card_data:
                 type_line = card_data.get("type_line", "")
                 primary_types = type_line.split(" — ")[0].strip()

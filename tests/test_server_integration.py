@@ -19,6 +19,7 @@ async def test_server_has_all_tools(client):
     assert "analysis_analyze_color_identity" in tool_names
     assert "analysis_analyze_mana_requirements" in tool_names
     assert "analysis_analyze_card_types" in tool_names
+    assert "analysis_analyze_commander_deck" in tool_names
 
 
 async def test_tool_descriptions_exist(client):
@@ -52,4 +53,4 @@ async def test_server_name_and_info(client):
     # We can't directly test server name through client, but we can verify
     # the server responds correctly to tool calls, indicating proper setup
     tools = await client.list_tools()
-    assert len(tools) == 7  # 2 scryfall + 5 analysis tools
+    assert len(tools) == 8  # 2 scryfall + 6 analysis tools
