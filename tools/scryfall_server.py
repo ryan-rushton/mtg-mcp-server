@@ -1,0 +1,230 @@
+from fastmcp import FastMCP
+import httpx
+from typing import List, Optional, Dict, Any
+from .utils import format_card_info, SCRYFALL_API_BASE
+
+scryfall_server: FastMCP = FastMCP("MTG Scryfall Server", dependencies=["httpx"])
+
+async def batch_lookup_cards(client: httpx.AsyncClient, card_names: List[str]) -> tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Batch lookup cards using Scryfall's collection endpoint.
+    
+    Args:
+        client: HTTP client for making requests
+        card_names: List of card names to look up
+        
+    Returns:
+        Tuple of (found_cards, not_found_names)
+    """
+    if not card_names:
+        return [], []
+    
+    # Scryfall batch endpoint accepts max 75 cards per request
+    BATCH_SIZE = 75
+    all_found_cards = []
+    all_not_found = []
+    
+    # Process cards in batches
+    for i in range(0, len(card_names), BATCH_SIZE):
+        batch = card_names[i:i + BATCH_SIZE]
+        
+        # Prepare batch request payload
+        identifiers = [{"name": name.strip()} for name in batch]
+        
+        try:
+            response = await client.post(
+                f"{SCRYFALL_API_BASE}/cards/collection",
+                json={"identifiers": identifiers},
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                found_cards = data.get("data", [])
+                not_found = data.get("not_found", [])
+                
+                all_found_cards.extend(found_cards)
+                
+                # Extract card names from not_found identifiers
+                not_found_names = [item.get("name", "") for item in not_found if "name" in item]
+                all_not_found.extend(not_found_names)
+                
+            else:
+                # If batch fails, fall back to individual lookups for this batch
+                print(f"Batch lookup failed with status {response.status_code}, falling back to individual lookups")
+                individual_found, individual_not_found = await individual_lookup_fallback(client, batch)
+                all_found_cards.extend(individual_found)
+                all_not_found.extend(individual_not_found)
+                
+        except Exception as e:
+            print(f"Batch lookup error: {e}, falling back to individual lookups")
+            individual_found, individual_not_found = await individual_lookup_fallback(client, batch)
+            all_found_cards.extend(individual_found)
+            all_not_found.extend(individual_not_found)
+    
+    return all_found_cards, all_not_found
+
+async def individual_lookup_fallback(client: httpx.AsyncClient, card_names: List[str]) -> tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Fallback to individual card lookups when batch fails.
+    
+    Args:
+        client: HTTP client for making requests
+        card_names: List of card names to look up individually
+        
+    Returns:
+        Tuple of (found_cards, not_found_names)
+    """
+    found_cards = []
+    not_found_names = []
+    
+    for card_name in card_names:
+        try:
+            response = await client.get(
+                f"{SCRYFALL_API_BASE}/cards/named",
+                params={"fuzzy": card_name.strip()}
+            )
+            
+            if response.status_code == 200:
+                card_data = response.json()
+                found_cards.append(card_data)
+            elif response.status_code == 404:
+                not_found_names.append(card_name)
+            else:
+                response.raise_for_status()
+                
+        except httpx.HTTPError:
+            not_found_names.append(card_name)
+    
+    return found_cards, not_found_names
+
+@scryfall_server.tool()
+async def lookup_cards(card_names: List[str]) -> str:
+    """
+    Look up specific Magic: The Gathering cards by exact or fuzzy name matching using batch operations.
+    
+    This tool efficiently retrieves detailed card information for multiple cards using Scryfall's 
+    batch collection endpoint (up to 75 cards per request). For larger lists, it automatically 
+    splits into multiple batch requests to minimize API calls.
+    
+    Args:
+        card_names (List[str]): List of card names to search for. Supports fuzzy matching,
+                               so partial or slightly misspelled names will often work.
+                               Examples: ["Lightning Bolt", "Jace, the Mind Sculptor"]
+    
+    Returns:
+        str: Formatted markdown string containing detailed card information for each found card,
+             separated by horizontal rules. Also includes a list of any cards that could not be found.
+             
+             Example output format:
+             **Cards Found:**
+             **Lightning Bolt** {R}
+             Instant
+             Lightning Bolt deals 3 damage to any target.
+             Price (USD): $0.50
+             ---
+             **Cards Not Found:** Misspelled Card Name
+    """
+    if not card_names:
+        return "No card names provided."
+    
+    async with httpx.AsyncClient() as client:
+        found_cards, not_found_names = await batch_lookup_cards(client, card_names)
+        
+        # Format found cards
+        results = []
+        for card_data in found_cards:
+            formatted_card = format_card_info(card_data)
+            results.append(formatted_card)
+        
+        # Build response
+        response_parts = []
+        if results:
+            response_parts.append("**Cards Found:**\n")
+            response_parts.extend([f"{result}\n---\n" for result in results])
+        
+        if not_found_names:
+            response_parts.append(f"**Cards Not Found:** {', '.join(not_found_names)}")
+        
+        return "\n".join(response_parts)
+
+@scryfall_server.tool()
+async def search_cards_by_criteria(
+    name: Optional[str] = None,
+    colors: Optional[str] = None,
+    type_line: Optional[str] = None,
+    mana_cost: Optional[int] = None,
+    limit: int = 10,
+) -> str:
+    """
+    Search for Magic: The Gathering cards using flexible criteria filters.
+    
+    This tool allows searching the Scryfall database using various filters like partial names,
+    colors, card types, or converted mana cost. At least one search criterion must be provided.
+    
+    Args:
+        name (Optional[str]): Partial card name to search for. Case-insensitive.
+                             Examples: "dragon", "jace", "bolt"
+        colors (Optional[str]): Card colors to filter by. Use full color names or combinations.
+                               Examples: "red", "blue", "white", "red blue", "colorless"
+        type_line (Optional[str]): Card type to filter by. Matches any part of the type line.
+                                  Examples: "creature", "instant", "planeswalker", "artifact"
+        mana_cost (Optional[int]): Converted mana cost (CMC) to filter by. Must be exact match.
+                                  Examples: 1, 3, 7
+        limit (int): Maximum number of results to return. Must be between 1 and 25.
+                    Default is 10.
+    
+    Returns:
+        str: Formatted markdown string with search results header, detailed card information
+             for each matching card, and a summary showing how many results were found.
+             
+             Example output format:
+             **Search Results for:** name:"dragon" color:red
+             **Shivan Dragon** {4}{R}{R}
+             Creature — Dragon
+             Flying (This creature can't be blocked except by creatures with flying or reach.)
+             5/5
+             ---
+             *Showing 10 of 847 total results*
+    """
+    query_parts = []
+    if name:
+        query_parts.append(f'name:"{name}"')
+    if colors:
+        query_parts.append(f"color:{colors}")
+    if type_line:
+        query_parts.append(f"type:{type_line}")
+    if mana_cost is not None:
+        query_parts.append(f"cmc:{mana_cost}")
+    if not query_parts:
+        return "No search criteria provided."
+    search_query = " ".join(query_parts)
+    limit = min(max(1, limit), 25)
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                f"{SCRYFALL_API_BASE}/cards/search",
+                params={"q": search_query, "page": 1, "order": "name"},
+            )
+            if response.status_code == 404:
+                return f"No cards found matching criteria: {search_query}"
+            response.raise_for_status()
+            data = response.json()
+            cards = data.get("data", [])[:limit]
+            if not cards:
+                return f"No cards found matching criteria: {search_query}"
+            results = []
+            for card in cards:
+                formatted_card = format_card_info(card)
+                results.append(formatted_card)
+            result_text = f"**Search Results for:** {search_query}\n\n"
+            result_text += "\n---\n".join(results)
+            total_cards = data.get("total_cards", len(cards))
+            if total_cards > limit:
+                result_text += (
+                    f"\n\n*Showing {len(cards)} of {total_cards} total results*"
+                )
+            return result_text
+        except httpx.HTTPError as e:
+            return f"Error searching cards: {e}"

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:gofastmcp.com)",
+      "WebFetch(domain:gofastmcp.com)",
+      "Bash(python:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "Bash(grep:*)",
+      "Bash(mv:*)",
+      "Bash(cp:*)",
+      "Bash(rm:*)"
+    ],
+    "deny": []
+  }
+}

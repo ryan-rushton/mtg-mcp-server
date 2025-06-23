@@ -2,25 +2,52 @@ from fastmcp import FastMCP
 import httpx
 from typing import List
 from collections import Counter, defaultdict
-from utils import search_card
+from .utils import search_card
+from .scryfall_server import batch_lookup_cards
 
-analysis_server = FastMCP("MTG Analysis Server", dependencies=["httpx"])
+analysis_server: FastMCP = FastMCP("MTG Analysis Server", dependencies=["httpx"])
 
 
 @analysis_server.tool()
 async def calculate_mana_curve(card_names: List[str]) -> str:
+    """
+    Calculate and display the mana curve distribution for a list of Magic: The Gathering cards.
+    
+    The mana curve shows how many cards exist at each converted mana cost (CMC), which is
+    crucial for understanding a deck's speed and mana requirements. This helps with deck
+    building decisions and mana base construction.
+    
+    Args:
+        card_names (List[str]): List of card names to analyze for their mana costs.
+                               Cards that cannot be found will be listed separately.
+                               Examples: ["Lightning Bolt", "Shivan Dragon", "Sol Ring"]
+    
+    Returns:
+        str: Formatted markdown string showing the count of cards at each CMC value,
+             sorted by mana cost from lowest to highest. Also lists any cards that
+             could not be found.
+             
+             Example output format:
+             **Mana Curve:**
+             CMC 0: 2
+             CMC 1: 4
+             CMC 3: 6
+             CMC 6: 1
+             
+             **Cards Not Found:** Misspelled Card
+    """
     if not card_names:
         return "No card names provided."
     async with httpx.AsyncClient() as client:
-        cmc_counter = Counter()
-        not_found = []
-        for card_name in card_names:
-            card_data = await search_card(client, card_name.strip())
-            if card_data and "cmc" in card_data:
+        cmc_counter: Counter[float] = Counter()
+        
+        # Use batch lookup for better performance
+        found_cards, not_found = await batch_lookup_cards(client, card_names)
+        
+        for card_data in found_cards:
+            if "cmc" in card_data:
                 cmc = card_data["cmc"]
                 cmc_counter[cmc] += 1
-            else:
-                not_found.append(card_name)
     result = ["**Mana Curve:**"]
     for cmc in sorted(cmc_counter):
         result.append(f"CMC {cmc}: {cmc_counter[cmc]}")
@@ -31,11 +58,38 @@ async def calculate_mana_curve(card_names: List[str]) -> str:
 
 @analysis_server.tool()
 async def analyze_lands(card_names: List[str]) -> str:
+    """
+    Analyze the land base of a Magic: The Gathering deck, counting total lands and mana production.
+    
+    This tool identifies all lands in the provided card list and analyzes what colors of mana
+    they can produce by examining their oracle text for mana symbols. Essential for evaluating
+    deck mana bases and color fixing.
+    
+    Args:
+        card_names (List[str]): List of card names to analyze for land content and mana production.
+                               Only cards with "Land" in their type line will be counted.
+                               Examples: ["Island", "Sacred Foundry", "Command Tower"]
+    
+    Returns:
+        str: Formatted markdown string showing total land count and the number of lands
+             that can produce each color of mana. Lists any cards that could not be found.
+             
+             Example output format:
+             **Land Analysis:**
+             Total Lands: 8
+             White mana sources: 3
+             Blue mana sources: 2
+             Black mana sources: 0
+             Red mana sources: 4
+             Green mana sources: 1
+             
+             **Cards Not Found:** Unknown Land
+    """
     if not card_names:
         return "No card names provided."
     async with httpx.AsyncClient() as client:
         land_count = 0
-        color_production = defaultdict(int)
+        color_production: defaultdict[str, int] = defaultdict(int)
         not_found = []
         for card_name in card_names:
             card_data = await search_card(client, card_name.strip())
@@ -62,10 +116,40 @@ async def analyze_lands(card_names: List[str]) -> str:
 
 @analysis_server.tool()
 async def analyze_color_identity(card_names: List[str]) -> str:
+    """
+    Analyze the color identity distribution of Magic: The Gathering cards in a deck.
+    
+    Color identity determines which colors a card belongs to based on mana symbols in its
+    mana cost and rules text. This analysis shows both individual color presence and
+    color combination patterns, essential for Commander deck building and mana base design.
+    
+    Args:
+        card_names (List[str]): List of card names to analyze for color identity.
+                               Each card's color identity will be determined from its mana symbols.
+                               Examples: ["Lightning Bolt", "Terminate", "Sol Ring"]
+    
+    Returns:
+        str: Formatted markdown string with comprehensive color analysis including:
+             - Total cards analyzed and colorless count
+             - Color combination breakdown with percentages  
+             - Individual color presence statistics
+             - List of any cards that could not be found
+             
+             Example output format:
+             **Color Identity Analysis:**
+             Total Cards Analyzed: 10
+             Colorless: 2 (20.0%)
+             Red: 3 (30.0%)
+             Black/Red: 2 (20.0%)
+             
+             **Individual Color Presence:**
+             Red: 5 cards (50.0%)
+             Black: 2 cards (20.0%)
+    """
     if not card_names:
         return "No card names provided."
     async with httpx.AsyncClient() as client:
-        color_counts = defaultdict(int)
+        color_counts: defaultdict[str, int] = defaultdict(int)
         total_colored_cards = 0
         colorless_count = 0
         not_found = []
@@ -96,7 +180,7 @@ async def analyze_color_identity(card_names: List[str]) -> str:
         )
         percentage = (count / total_cards) * 100
         result.append(f"{color_display}: {count} ({percentage:.1f}%)")
-    individual_colors = defaultdict(int)
+    individual_colors: defaultdict[str, int] = defaultdict(int)
     for color_combo, count in color_counts.items():
         for color in color_combo:
             individual_colors[color] += count
@@ -113,11 +197,42 @@ async def analyze_color_identity(card_names: List[str]) -> str:
 
 @analysis_server.tool()
 async def analyze_mana_requirements(card_names: List[str]) -> str:
+    """
+    Compare mana requirements of spells versus mana production capability of lands in a deck.
+    
+    This analysis separates lands from spells, examines what colors the lands can produce,
+    and compares that to the color requirements of the spells. Provides warnings for
+    insufficient mana sources and recommendations for deck building.
+    
+    Args:
+        card_names (List[str]): List of card names to analyze, including both lands and spells.
+                               Lands will be identified by "Land" in their type line.
+                               Examples: ["Lightning Bolt", "Island", "Sacred Foundry", "Counterspell"]
+    
+    Returns:
+        str: Formatted markdown string with detailed mana analysis including:
+             - Total card breakdown (spells vs lands)
+             - Color-by-color source ratio analysis with status indicators
+             - Overall mana coverage ratio and recommendations
+             - Warning symbols: ⚠️ for problems, ⚡ for moderate, ✓ for good coverage
+             
+             Example output format:
+             **Mana Requirements vs Production Analysis:**
+             Total Cards: 15 (Spells: 10, Lands: 5)
+             
+             **Color Requirements vs Land Production:**
+             Red: 3/4 sources ✓ Good coverage
+             Blue: 0/2 sources ⚠️ NO SOURCES!
+             
+             **Summary:**
+             Overall coverage ratio: 0.45
+             ⚡ Moderate mana base - consider adding more sources
+    """
     if not card_names:
         return "No card names provided."
     async with httpx.AsyncClient() as client:
-        spell_color_counts = defaultdict(int)
-        land_color_production = defaultdict(int)
+        spell_color_counts: defaultdict[str, int] = defaultdict(int)
+        land_color_production: defaultdict[str, int] = defaultdict(int)
         spell_total = 0
         land_total = 0
         not_found = []
@@ -183,11 +298,46 @@ async def analyze_mana_requirements(card_names: List[str]) -> str:
 
 @analysis_server.tool()
 async def analyze_card_types(card_names: List[str]) -> str:
+    """
+    Analyze the distribution of card types in a Magic: The Gathering deck.
+    
+    This tool categorizes cards by their primary types (Creature, Instant, Sorcery, etc.)
+    and provides deck composition analysis. Includes Commander format guidelines to help
+    evaluate deck balance and suggests improvements based on typical deck construction.
+    
+    Args:
+        card_names (List[str]): List of card names to analyze for type distribution.
+                               Cards will be categorized by their primary type line.
+                               Examples: ["Lightning Bolt", "Llanowar Elves", "Island", "Sol Ring"]
+    
+    Returns:
+        str: Formatted markdown string with comprehensive type analysis including:
+             - Total cards analyzed and percentage breakdown by type
+             - Commander deck guidelines comparison with status indicators
+             - Most common detailed type lines for reference
+             - Recommendations using ✓ for good ranges, ⚠ for outside typical ranges
+             
+             Example output format:
+             **Card Type Distribution:**
+             Total Cards Analyzed: 15
+             Creature: 6 (40.0%)
+             Instant: 4 (26.7%)
+             Land: 3 (20.0%)
+             Artifact: 2 (13.3%)
+             
+             **Commander Deck Guidelines:**
+             ✓ Creatures (6): Good range (30-40 typical)
+             ⚠ Lands (3): Below typical range (36-40)
+             
+             **Most Common Type Lines:**
+             Creature — Human Wizard: 2
+             Instant: 4
+    """
     if not card_names:
         return "No card names provided."
     async with httpx.AsyncClient() as client:
-        type_counts = defaultdict(int)
-        detailed_types = defaultdict(int)
+        type_counts: defaultdict[str, int] = defaultdict(int)
+        detailed_types: defaultdict[str, int] = defaultdict(int)
         not_found = []
         for card_name in card_names:
             card_data = await search_card(client, card_name.strip())
