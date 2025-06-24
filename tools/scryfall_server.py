@@ -2,6 +2,7 @@ from fastmcp import FastMCP
 import httpx
 from typing import List, Optional, Dict, Any
 from .utils import format_card_info, SCRYFALL_API_BASE, cache_card_data, search_cache
+from config import config
 
 scryfall_server: FastMCP = FastMCP("MTG Scryfall Server", dependencies=["httpx"])
 
@@ -19,8 +20,8 @@ async def batch_lookup_cards(client: httpx.AsyncClient, card_names: List[str]) -
     if not card_names:
         return [], []
     
-    # Scryfall batch endpoint accepts max 75 cards per request
-    BATCH_SIZE = 75
+    # Scryfall batch endpoint accepts max cards per request
+    BATCH_SIZE = config.scryfall.batch_size
     all_found_cards = []
     all_not_found = []
     
@@ -106,29 +107,17 @@ async def individual_lookup_fallback(client: httpx.AsyncClient, card_names: List
 @scryfall_server.tool()
 async def lookup_cards(card_names: List[str]) -> str:
     """
-    Look up specific Magic: The Gathering cards by exact or fuzzy name matching using batch operations.
+    Look up MTG cards by name with fuzzy matching - ESSENTIAL FIRST STEP for deck analysis.
     
-    This tool efficiently retrieves detailed card information for multiple cards using Scryfall's 
-    batch collection endpoint (up to 75 cards per request). For larger lists, it automatically 
-    splits into multiple batch requests to minimize API calls.
+    WHEN TO USE: Always use this before other analysis tools to validate card names.
+    FOLLOWS WELL WITH: analysis_calculate_mana_curve, analysis_analyze_commander_deck
+    
+    Uses batch operations (up to 75 cards) for efficient API usage.
     
     Args:
-        card_names (List[str]): List of card names to search for. Supports fuzzy matching,
-                               so partial or slightly misspelled names will often work.
-                               Examples: ["Lightning Bolt", "Jace, the Mind Sculptor"]
-    
-    Returns:
-        str: Formatted markdown string containing detailed card information for each found card,
-             separated by horizontal rules. Also includes a list of any cards that could not be found.
-             
-             Example output format:
-             **Cards Found:**
-             **Lightning Bolt** {R}
-             Instant
-             Lightning Bolt deals 3 damage to any target.
-             Price (USD): $0.50
-             ---
-             **Cards Not Found:** Misspelled Card Name
+        card_names: List of card names (supports fuzzy matching)
+        
+    Returns: Detailed card info with prices and oracle text
     """
     if not card_names:
         return "No card names provided."
@@ -162,35 +151,19 @@ async def search_cards_by_criteria(
     limit: int = 10,
 ) -> str:
     """
-    Search for Magic: The Gathering cards using flexible criteria filters.
+    Search MTG database by name, color, type, or mana cost.
     
-    This tool allows searching the Scryfall database using various filters like partial names,
-    colors, card types, or converted mana cost. At least one search criterion must be provided.
+    WHEN TO USE: When users want to find cards matching specific criteria or need recommendations.
+    EXAMPLES: "find red dragons", "show me 3-mana artifacts", "search for counterspells"
     
     Args:
-        name (Optional[str]): Partial card name to search for. Case-insensitive.
-                             Examples: "dragon", "jace", "bolt"
-        colors (Optional[str]): Card colors to filter by. Use full color names or combinations.
-                               Examples: "red", "blue", "white", "red blue", "colorless"
-        type_line (Optional[str]): Card type to filter by. Matches any part of the type line.
-                                  Examples: "creature", "instant", "planeswalker", "artifact"
-        mana_cost (Optional[int]): Converted mana cost (CMC) to filter by. Must be exact match.
-                                  Examples: 1, 3, 7
-        limit (int): Maximum number of results to return. Must be between 1 and 25.
-                    Default is 10.
-    
-    Returns:
-        str: Formatted markdown string with search results header, detailed card information
-             for each matching card, and a summary showing how many results were found.
-             
-             Example output format:
-             **Search Results for:** name:"dragon" color:red
-             **Shivan Dragon** {4}{R}{R}
-             Creature — Dragon
-             Flying (This creature can't be blocked except by creatures with flying or reach.)
-             5/5
-             ---
-             *Showing 10 of 847 total results*
+        name: Partial card name (e.g. "dragon", "bolt")
+        colors: Color filter (e.g. "red", "blue white")
+        type_line: Card type (e.g. "creature", "instant")
+        mana_cost: Exact CMC value
+        limit: Max results (1-25, default 10)
+        
+    Returns: Search results with card details and total count
     """
     query_parts = []
     if name:

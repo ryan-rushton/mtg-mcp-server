@@ -45,7 +45,7 @@ This is an MCP (Model Context Protocol) server for Magic: The Gathering card ana
 
 **tools/utils.py** - Shared utilities:
 
-- `search_card()` - Card lookup with in-memory caching
+- `get_cached_card()` - Card lookup with in-memory caching  
 - `format_card_info()` - Formats card data for display
 - Maintains card cache to reduce API calls
 

@@ -1,40 +1,16 @@
 # Utility functions and shared cache for MTG MCP server
 import httpx
 from typing import Dict, Any, Optional
+from config import config
 
 # Scryfall API base URL
-SCRYFALL_API_BASE = "https://api.scryfall.com"
+SCRYFALL_API_BASE = config.scryfall.api_base
 
 # In-memory cache for card data
 card_cache: Dict[str, Dict[str, Any]] = {}
 
 # Cache for search results to avoid repeated API calls
 search_cache: Dict[str, Dict[str, Any]] = {}
-
-
-async def search_card(
-    client: httpx.AsyncClient, card_name: str
-) -> Optional[Dict[str, Any]]:
-    """Search for a single card by name using Scryfall's fuzzy search, with cache."""
-    cache_key = card_name.strip().lower()
-    if cache_key in card_cache:
-        return card_cache[cache_key]
-    try:
-        response = await client.get(
-            f"{SCRYFALL_API_BASE}/cards/named", params={"fuzzy": card_name}
-        )
-        if response.status_code == 200:
-            card_data = response.json()
-            card_cache[cache_key] = card_data
-            return card_data
-        elif response.status_code == 404:
-            return None
-        else:
-            response.raise_for_status()
-        return None
-    except httpx.HTTPError as e:
-        print(f"Error searching for card '{card_name}': {e}")
-        return None
 
 
 def cache_card_data(card_data: Dict[str, Any]) -> None:
@@ -63,8 +39,7 @@ async def get_cached_card(client: httpx.AsyncClient, card_name: str) -> Optional
             cache_card_data(card_data)
             return card_data
         elif response.status_code == 404:
-            # Cache negative results to avoid repeated lookups
-            card_cache[cache_key] = None
+            # Don't cache negative results to avoid type issues
             return None
         else:
             response.raise_for_status()
