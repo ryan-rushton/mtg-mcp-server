@@ -57,8 +57,14 @@ async def test_analyze_lands(client, mock_scryfall_land_response):
 
 async def test_analyze_color_identity(client, mock_scryfall_collection_response):
     """Test color identity analysis."""
-    with patch("tools.color_analysis.batch_lookup_cards") as mock_batch:
-        mock_batch.return_value = (mock_scryfall_collection_response["data"], [])
+    with patch("tools.color_analysis.get_cached_card") as mock_get_card:
+        # Mock individual card lookups used by color_analysis
+        def mock_card_lookup(client, card_name):
+            for card in mock_scryfall_collection_response["data"]:
+                if card["name"].lower() == card_name.lower():
+                    return card
+            return None
+        mock_get_card.side_effect = mock_card_lookup
 
         result = await client.call_tool(
             "analysis_analyze_color_identity",
@@ -95,8 +101,14 @@ async def test_analyze_mana_requirements(client):
         },
     ]
 
-    with patch("tools.color_analysis.batch_lookup_cards") as mock_batch:
-        mock_batch.return_value = (mock_cards, [])
+    with patch("tools.color_analysis.get_cached_card") as mock_get_card:
+        # Mock individual card lookups used by color_analysis
+        def mock_card_lookup(client, card_name):
+            for card in mock_cards:
+                if card["name"].lower() == card_name.lower():
+                    return card
+            return None
+        mock_get_card.side_effect = mock_card_lookup
 
         result = await client.call_tool(
             "analysis_analyze_mana_requirements",

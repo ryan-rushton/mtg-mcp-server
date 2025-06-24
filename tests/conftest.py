@@ -13,8 +13,8 @@ async def mcp_server():
     server = FastMCP("MTG Test Server", dependencies=["httpx"])
 
     # Import sub-servers like the main server does
-    await server.import_server("scryfall", scryfall_server)
-    await server.import_server("analysis", analysis_server)
+    await server.import_server(scryfall_server, "scryfall")
+    await server.import_server(analysis_server, "analysis")
 
     return server
 

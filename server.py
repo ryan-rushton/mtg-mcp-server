@@ -11,10 +11,10 @@ mcp: FastMCP = FastMCP("MTG Card Analysis Server", dependencies=["httpx"])
 async def setup_server():
     """Set up the main server by importing sub-servers."""
     # Import Scryfall server tools (will be prefixed with "scryfall_")
-    await mcp.import_server("scryfall", scryfall_server)
+    await mcp.import_server(scryfall_server, "scryfall")
 
     # Import analysis server tools (will be prefixed with "analysis_")
-    await mcp.import_server("analysis", analysis_server)
+    await mcp.import_server(analysis_server, "analysis")
 
 
 # Initialize server setup at module level for testing
