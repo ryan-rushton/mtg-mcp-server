@@ -11,11 +11,11 @@ from tools.analysis_server import analysis_server
 async def mcp_server():
     """Create a test MCP server with both sub-servers imported."""
     server = FastMCP("MTG Test Server", dependencies=["httpx"])
-    
+
     # Import sub-servers like the main server does
     await server.import_server("scryfall", scryfall_server)
     await server.import_server("analysis", analysis_server)
-    
+
     return server
 
 
@@ -38,19 +38,19 @@ def mock_scryfall_collection_response():
                 "oracle_text": "Lightning Bolt deals 3 damage to any target.",
                 "cmc": 1.0,
                 "color_identity": ["R"],
-                "prices": {"usd": "0.50"}
+                "prices": {"usd": "0.50"},
             },
             {
-                "name": "Counterspell", 
+                "name": "Counterspell",
                 "mana_cost": "{U}{U}",
                 "type_line": "Instant",
                 "oracle_text": "Counter target spell.",
                 "cmc": 2.0,
                 "color_identity": ["U"],
-                "prices": {"usd": "1.25"}
-            }
+                "prices": {"usd": "1.25"},
+            },
         ],
-        "not_found": []
+        "not_found": [],
     }
 
 
@@ -68,10 +68,10 @@ def mock_scryfall_search_response():
                 "toughness": "5",
                 "cmc": 6.0,
                 "color_identity": ["R"],
-                "prices": {"usd": "0.25"}
+                "prices": {"usd": "0.25"},
             }
         ],
-        "total_cards": 1
+        "total_cards": 1,
     }
 
 
@@ -87,7 +87,7 @@ def mock_scryfall_land_response():
                 "oracle_text": "{T}: Add one mana of any color in your commander's color identity.",
                 "cmc": 0.0,
                 "color_identity": [],
-                "prices": {"usd": "0.75"}
+                "prices": {"usd": "0.75"},
             },
             {
                 "name": "Sacred Foundry",
@@ -96,8 +96,8 @@ def mock_scryfall_land_response():
                 "oracle_text": "({T}: Add {R} or {W}.)\nAs Sacred Foundry enters the battlefield, you may pay 2 life. If you don't, it enters the battlefield tapped.",
                 "cmc": 0.0,
                 "color_identity": [],
-                "prices": {"usd": "12.50"}
-            }
+                "prices": {"usd": "12.50"},
+            },
         ],
-        "not_found": []
+        "not_found": [],
     }

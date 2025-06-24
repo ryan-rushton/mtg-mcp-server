@@ -7,30 +7,32 @@ from collections import Counter, defaultdict
 from .utils import get_cached_card
 from .scryfall_server import batch_lookup_cards
 
-basic_analysis_server: FastMCP = FastMCP("MTG Basic Analysis Server", dependencies=["httpx"])
+basic_analysis_server: FastMCP = FastMCP(
+    "MTG Basic Analysis Server", dependencies=["httpx"]
+)
 
 
 @basic_analysis_server.tool()
 async def calculate_mana_curve(card_names: List[str]) -> str:
     """
     Calculate mana curve for deck building and mana base decisions.
-    
+
     WHEN TO USE: When analyzing deck speed, mana requirements, or optimizing card costs.
     USE FOR: "My deck is too slow", "what's my curve like?", mana base optimization
-    
+
     Args:
         card_names: List of Magic card names to analyze
-        
+
     Returns: Formatted mana curve showing CMC distribution
     """
     if not card_names:
         return "No card names provided."
     async with httpx.AsyncClient() as client:
         cmc_counter: Counter[float] = Counter()
-        
+
         # Use batch lookup for better performance
         found_cards, not_found = await batch_lookup_cards(client, card_names)
-        
+
         for card_data in found_cards:
             if "cmc" in card_data:
                 cmc = card_data["cmc"]
@@ -47,13 +49,13 @@ async def calculate_mana_curve(card_names: List[str]) -> str:
 async def analyze_lands(card_names: List[str]) -> str:
     """
     Analyze land base and mana production by color.
-    
+
     WHEN TO USE: For mana base evaluation, color fixing analysis, or land count questions.
     USE FOR: "Is my mana base good?", "do I have enough lands?", "can I cast my spells?"
-    
+
     Args:
         card_names: List of card names (will identify lands automatically)
-        
+
     Returns: Land count and color production analysis
     """
     if not card_names:
@@ -89,13 +91,13 @@ async def analyze_lands(card_names: List[str]) -> str:
 async def analyze_card_types(card_names: List[str]) -> str:
     """
     Analyze card type distribution and deck composition.
-    
+
     WHEN TO USE: For deck composition analysis or format guideline compliance.
     USE FOR: "what types of cards do I have?", creature count, spell distribution
-    
+
     Args:
         card_names: List of card names to categorize
-        
+
     Returns: Type breakdown with Commander format guidelines and ✓/⚠ indicators
     """
     if not card_names:

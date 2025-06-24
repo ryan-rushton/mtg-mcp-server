@@ -10,7 +10,7 @@ analysis_resources_server: FastMCP = FastMCP("MTG Analysis Resources Server")
 def get_command_zone_template() -> str:
     """
     The official Command Zone podcast deckbuilding template for Commander decks.
-    
+
     This resource provides the complete framework for building balanced, functional
     Commander decks with proper interaction and consistency.
     """
@@ -59,7 +59,7 @@ Remember: Users want help improving their decks, not just statistics."""
 def analyze_commander_deck_prompt(commander: str, decklist: str) -> str:
     """
     Prompt for analyzing a Commander deck using the new simplified parameters.
-    
+
     This prompt guides the LLM to use the updated analysis_analyze_commander_deck tool
     which now takes just a commander and decklist and handles everything automatically.
     """
@@ -105,7 +105,7 @@ Use this structured data to provide specific, actionable deck improvement advice
 def suggest_deck_improvements_prompt() -> str:
     """
     Prompt for suggesting specific improvements to a Commander deck.
-    
+
     This prompt helps the LLM provide actionable upgrade suggestions
     based on Command Zone principles and deck analysis results.
     """
@@ -191,7 +191,7 @@ def common_workflows() -> str:
 def get_commander_staples() -> str:
     """
     List of commonly played Commander staples by category.
-    
+
     This resource provides examples of popular cards in each Command Zone category
     to help with deck building and card recommendations.
     """

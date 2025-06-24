@@ -20,19 +20,20 @@ def cache_card_data(card_data: Dict[str, Any]) -> None:
         card_cache[cache_key] = card_data
 
 
-async def get_cached_card(client: httpx.AsyncClient, card_name: str) -> Optional[Dict[str, Any]]:
+async def get_cached_card(
+    client: httpx.AsyncClient, card_name: str
+) -> Optional[Dict[str, Any]]:
     """Get card from cache or fetch and cache it."""
     cache_key = card_name.strip().lower()
-    
+
     # Check cache first
     if cache_key in card_cache:
         return card_cache[cache_key]
-    
+
     # Fetch and cache
     try:
         response = await client.get(
-            f"{SCRYFALL_API_BASE}/cards/named", 
-            params={"fuzzy": card_name}
+            f"{SCRYFALL_API_BASE}/cards/named", params={"fuzzy": card_name}
         )
         if response.status_code == 200:
             card_data = response.json()
@@ -45,7 +46,7 @@ async def get_cached_card(client: httpx.AsyncClient, card_name: str) -> Optional
             response.raise_for_status()
     except httpx.HTTPError as e:
         print(f"Error fetching card '{card_name}': {e}")
-    
+
     return None
 
 
