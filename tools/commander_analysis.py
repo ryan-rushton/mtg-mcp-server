@@ -204,13 +204,6 @@ async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
         },
     }
 
-    # Calculate total unique cards (since cards can be in multiple categories)
-    all_cards: Set[str] = set()
-    for data in categories.values():
-        all_cards.update(data["cards"])
-
-    total_cards = len(all_cards)
-
     # Add commander info to results
     commander_name = commander_data.get("name", commander)
     commander_colors = commander_data.get("color_identity", [])
@@ -220,12 +213,14 @@ async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
         if color in color_map:
             color_names.append(color_map[color])
 
+    total_cards = len(decklist) + 1  # Including commander
+
     # Build analysis result
     result = ["**Command Zone Deck Analysis:**"]
     result.append(f"**Commander:** {commander_name}")
     if color_names:
         result.append(f"**Colors:** {'/'.join(color_names)}")
-    result.append(f"**Deck Size:** {total_cards + 1} cards (including commander)")
+    result.append(f"**Deck Size:** {total_cards} cards (including commander)")
     result.append("")
 
     # Analyze each category with Command Zone framework
