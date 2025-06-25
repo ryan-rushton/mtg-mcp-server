@@ -1,7 +1,8 @@
 from fastmcp import FastMCP
 import httpx
+import json
 from typing import List, Optional, Dict, Any
-from .utils import format_card_info, SCRYFALL_API_BASE, cache_card_data, search_cache
+from .utils import SCRYFALL_API_BASE, cache_card_data, search_cache
 from config import config
 
 scryfall_server: FastMCP = FastMCP("MTG Scryfall Server", dependencies=["httpx"])
@@ -132,7 +133,7 @@ async def lookup_cards(card_names: List[str]) -> str:
     Args:
         card_names: List of card names (supports fuzzy matching)
 
-    Returns: Detailed card info with prices and oracle text
+    Returns: JSON with detailed card info including prices and oracle text
     """
     if not card_names:
         return "No card names provided."
@@ -140,22 +141,35 @@ async def lookup_cards(card_names: List[str]) -> str:
     async with httpx.AsyncClient() as client:
         found_cards, not_found_names = await batch_lookup_cards(client, card_names)
 
-        # Format found cards
-        results = []
+        # Format found cards with essential information
+        cards_data = []
         for card_data in found_cards:
-            formatted_card = format_card_info(card_data)
-            results.append(formatted_card)
+            card_info = {
+                "name": card_data.get("name", ""),
+                "mana_cost": card_data.get("mana_cost", ""),
+                "cmc": card_data.get("cmc", 0),
+                "type_line": card_data.get("type_line", ""),
+                "oracle_text": card_data.get("oracle_text", ""),
+                "colors": card_data.get("colors", []),
+                "color_identity": card_data.get("color_identity", []),
+                "set_name": card_data.get("set_name", ""),
+                "rarity": card_data.get("rarity", ""),
+                "prices": card_data.get("prices", {})
+            }
+            cards_data.append(card_info)
 
-        # Build response
-        response_parts = []
-        if results:
-            response_parts.append("**Cards Found:**\n")
-            response_parts.extend([f"{result}\n---\n" for result in results])
+        # Build structured JSON response
+        result = {
+            "found_cards": cards_data,
+            "not_found_cards": not_found_names,
+            "summary": {
+                "total_requested": len(card_names),
+                "found_count": len(cards_data),
+                "not_found_count": len(not_found_names)
+            }
+        }
 
-        if not_found_names:
-            response_parts.append(f"**Cards Not Found:** {', '.join(not_found_names)}")
-
-        return "\n".join(response_parts)
+        return json.dumps(result, indent=2)
 
 
 @scryfall_server.tool()
@@ -179,7 +193,7 @@ async def search_cards_by_criteria(
         mana_cost: Exact CMC value
         limit: Max results (1-25, default 10)
 
-    Returns: Search results with card details and total count
+    Returns: JSON with search results including card details and total count
     """
     query_parts = []
     if name:
@@ -208,17 +222,32 @@ async def search_cards_by_criteria(
         total_cards = cached_result.get("total_cards", len(cards))
 
         # Build result from cache
-        results = []
+        cards_data = []
         for card in cards:
-            formatted_card = format_card_info(card)
-            results.append(formatted_card)
-        result_text = f"**Search Results for:** {search_query}\\n\\n"
-        result_text += "\\n---\\n".join(results)
-        if total_cards > limit:
-            result_text += (
-                f"\\n\\n*Showing {len(cards)} of {total_cards} total results*"
-            )
-        return result_text
+            card_info = {
+                "name": card.get("name", ""),
+                "mana_cost": card.get("mana_cost", ""),
+                "cmc": card.get("cmc", 0),
+                "type_line": card.get("type_line", ""),
+                "oracle_text": card.get("oracle_text", ""),
+                "colors": card.get("colors", []),
+                "color_identity": card.get("color_identity", []),
+                "set_name": card.get("set_name", ""),
+                "rarity": card.get("rarity", ""),
+                "prices": card.get("prices", {})
+            }
+            cards_data.append(card_info)
+        
+        result = {
+            "search_query": search_query,
+            "cards": cards_data,
+            "summary": {
+                "showing": len(cards),
+                "total_available": total_cards,
+                "more_available": total_cards > limit
+            }
+        }
+        return json.dumps(result, indent=2)
 
     async with httpx.AsyncClient() as client:
         try:
@@ -245,16 +274,31 @@ async def search_cards_by_criteria(
             total_cards = data.get("total_cards", len(cards))
             search_cache[cache_key] = {"cards": cards, "total_cards": total_cards}
 
-            results = []
+            cards_data = []
             for card in cards:
-                formatted_card = format_card_info(card)
-                results.append(formatted_card)
-            result_text = f"**Search Results for:** {search_query}\n\n"
-            result_text += "\n---\n".join(results)
-            if total_cards > limit:
-                result_text += (
-                    f"\n\n*Showing {len(cards)} of {total_cards} total results*"
-                )
-            return result_text
+                card_info = {
+                    "name": card.get("name", ""),
+                    "mana_cost": card.get("mana_cost", ""),
+                    "cmc": card.get("cmc", 0),
+                    "type_line": card.get("type_line", ""),
+                    "oracle_text": card.get("oracle_text", ""),
+                    "colors": card.get("colors", []),
+                    "color_identity": card.get("color_identity", []),
+                    "set_name": card.get("set_name", ""),
+                    "rarity": card.get("rarity", ""),
+                    "prices": card.get("prices", {})
+                }
+                cards_data.append(card_info)
+            
+            result = {
+                "search_query": search_query,
+                "cards": cards_data,
+                "summary": {
+                    "showing": len(cards),
+                    "total_available": total_cards,
+                    "more_available": total_cards > limit
+                }
+            }
+            return json.dumps(result, indent=2)
         except httpx.HTTPError as e:
             return f"Error searching cards: {e}"

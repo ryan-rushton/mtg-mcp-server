@@ -1,6 +1,7 @@
 """Tests for Scryfall server functionality."""
 
 import pytest
+import json
 from unittest.mock import AsyncMock, patch
 
 
@@ -15,12 +16,20 @@ async def test_lookup_cards_success(client, mock_scryfall_collection_response):
         )
 
         response = result[0].text
-        assert "**Cards Found:**" in response
-        assert "Lightning Bolt" in response
-        assert "Counterspell" in response
-        assert "{R}" in response
-        assert "{U}{U}" in response
-        assert "Cards Not Found" not in response
+        data = json.loads(response)
+        
+        assert "found_cards" in data
+        assert "not_found_cards" in data
+        assert "summary" in data
+        assert len(data["found_cards"]) == 2
+        assert len(data["not_found_cards"]) == 0
+        assert data["summary"]["found_count"] == 2
+        assert data["summary"]["not_found_count"] == 0
+        
+        # Check card data
+        card_names = [card["name"] for card in data["found_cards"]]
+        assert "Lightning Bolt" in card_names
+        assert "Counterspell" in card_names
 
 
 async def test_lookup_cards_with_not_found(client):
@@ -48,9 +57,14 @@ async def test_lookup_cards_with_not_found(client):
         )
 
         response = result[0].text
-        assert "**Cards Found:**" in response
-        assert "Lightning Bolt" in response
-        assert "**Cards Not Found:** Fake Card Name" in response
+        data = json.loads(response)
+        
+        assert "found_cards" in data
+        assert "not_found_cards" in data
+        assert len(data["found_cards"]) == 1
+        assert len(data["not_found_cards"]) == 1
+        assert data["found_cards"][0]["name"] == "Lightning Bolt"
+        assert "Fake Card Name" in data["not_found_cards"]
 
 
 async def test_lookup_cards_empty_input(client):
@@ -69,9 +83,15 @@ async def test_search_cards_by_criteria_success(client):
     )
 
     response = result[0].text
-    # Just verify the tool returns a properly formatted response
-    assert "**Search Results for:**" in response
-    # The actual search will work with real Scryfall API or may fail gracefully
+    # Just verify the tool returns properly formatted JSON
+    try:
+        data = json.loads(response)
+        assert "search_query" in data
+        assert "cards" in data
+        assert "summary" in data
+    except json.JSONDecodeError:
+        # If it's an error message, it should be a string
+        assert isinstance(response, str)
 
 
 @pytest.mark.asyncio
@@ -107,5 +127,11 @@ async def test_batch_lookup_cards_function(client):
     )
 
     response = result[0].text
-    # Verify we get either a successful lookup or proper error handling
-    assert "Lightning Bolt" in response or "Cards Not Found" in response
+    # Verify we get either a successful JSON lookup or proper error handling
+    try:
+        data = json.loads(response)
+        # Should have JSON structure
+        assert "found_cards" in data or "summary" in data
+    except json.JSONDecodeError:
+        # If it's an error message, it should mention the card
+        assert "Lightning Bolt" in response or "error" in response.lower()

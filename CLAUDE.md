@@ -60,11 +60,20 @@ The server uses a **modular architecture** with separated concerns across multip
 - `format_card_info()` - Formats card data for display
 - Maintains card cache to reduce API calls
 
-**test_client.py** - Comprehensive test client:
+**test_client.py** - Interactive demo client:
 
 - Example calls for all tools
 - Interactive mode for manual testing
 - Demonstrates proper FastMCP client usage
+- Shows quantity parsing in commander analysis
+
+**tests/test_integration.py** - Integration tests with real network requests:
+
+- Full end-to-end testing with live Scryfall API calls
+- Tests all server tools with real card data
+- Verifies error handling and edge cases
+- Tests commander analysis with quantities and duplicates
+- Run with: `uv run pytest tests/test_integration.py`
 
 ### Modular Tools Structure
 
@@ -112,7 +121,7 @@ All tools handle card lookup failures gracefully and have comprehensive docstrin
 
 ## Commander Deck Analysis
 
-The `analysis_analyze_commander_deck` tool implements the Command Zone deckbuilding template for 100-card Commander decks with **automatic card categorization**:
+The `analysis_analyze_commander_deck` tool provides card data for LLM-based Command Zone deckbuilding template analysis for 100-card Commander decks:
 
 **Command Zone Categories:**
 - **Ramp (10-12+ cards)**: Mana acceleration and fixing (Sol Ring, Cultivate, etc.)
@@ -122,12 +131,14 @@ The `analysis_analyze_commander_deck` tool implements the Command Zone deckbuild
 - **Lands (38 cards)**: All land cards including basics and nonbasics
 - **Plan Cards (~30 cards)**: Theme/strategy cards that advance your deck's game plan
 
-**New Usage Pattern:**
-The tool now takes just two parameters: `commander` and `decklist`. It automatically:
-1. Looks up all cards using Scryfall batch operations
-2. Categorizes cards based on oracle text analysis
-3. Provides structured JSON output with balance assessment
-4. Gives priority-based improvement recommendations
+**Usage Pattern:**
+The tool takes two parameters: `commander` and `decklist`. It provides:
+1. Commander card data (name, colors, type, oracle text)
+2. All deck card data with relevant properties for analysis
+3. Command Zone framework targets for reference
+4. Raw card data for the LLM to categorize and analyze
+
+The LLM should analyze the card data and categorize cards based on their properties, then provide deck balance assessment and improvement recommendations.
 
 ## Key Patterns
 

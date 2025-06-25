@@ -140,9 +140,47 @@ async def test_analyze_card_types(client, mock_scryfall_collection_response):
 
         response = result[0].text
         assert "**Card Type Distribution:**" in response
-        assert "Total Cards Analyzed: 2" in response
+        assert "Total Cards Analyzed: 2 of 2" in response
         assert "Instant: 2 (100.0%)" in response
+        assert "**All Card Types Found:**" in response
 
+
+async def test_analyze_card_types_comprehensive(client):
+    """Test enhanced card type analysis with diverse card types."""
+    # Mix of different card types including multi-type cards
+    result = await client.call_tool(
+        "analysis_analyze_card_types",
+        {"card_names": [
+            "Sol Ring",              # Artifact
+            "Forest",               # Basic Land  
+            "Command Tower",        # Land
+            "Lightning Bolt",       # Instant
+            "Cultivate",           # Sorcery
+            "Serra Angel",         # Creature — Angel
+            "Llanowar Elves",      # Creature — Elf Druid  
+            "Rhystic Study",       # Enchantment
+            "Jace, the Mind Sculptor", # Legendary Planeswalker — Jace
+        ]},
+    )
+
+    response = result[0].text
+    
+    # Should find all major card types
+    assert "Artifact:" in response
+    assert "Land:" in response or "Basic:" in response  # Basic lands have "Basic Land" type
+    assert "Instant:" in response
+    assert "Sorcery:" in response
+    assert "Creature:" in response
+    assert "Enchantment:" in response
+    assert "Planeswalker:" in response
+    
+    # Should show comprehensive analysis
+    assert "**All Card Types Found:**" in response
+    assert "**Commander Deck Guidelines:**" in response
+    assert "**Most Common Type Lines:**" in response
+    
+    # Should handle multi-type cards (like "Legendary Planeswalker")
+    assert "Legendary:" in response
 
 async def test_empty_card_names_analysis_tools(client):
     """Test all analysis tools handle empty input correctly."""
@@ -201,10 +239,10 @@ async def test_commander_deck_analysis_balanced(client):
 
     assert analysis["commander"]["name"] == "Atraxa, Praetors' Voice"
     assert analysis["deck"]["total_cards"] > 0
-    assert "categories" in analysis
-    assert "balance_assessment" in analysis
-    assert "recommendations" in analysis
-    assert "categorization" in analysis
+    assert "cards" in analysis
+    assert "command_zone_targets" in analysis
+    assert "instructions" in analysis
+    assert len(analysis["cards"]) == len(set(decklist))  # Number of unique cards
 
 
 async def test_commander_deck_analysis_error_cases(client):
@@ -252,5 +290,112 @@ async def test_commander_deck_analysis_basic_functionality(client):
     analysis = json.loads(response)
 
     assert analysis["commander"]["name"] == "Atraxa, Praetors' Voice"
-    assert "categories" in analysis
-    assert "balance_assessment" in analysis
+    assert "cards" in analysis
+    assert "command_zone_targets" in analysis
+    assert "instructions" in analysis
+    assert "unique_cards" in analysis["deck"]
+
+
+async def test_commander_deck_analysis_with_quantities(client):
+    """Test commander deck analysis with card quantities."""
+    # Test decklist with quantities and duplicates
+    decklist = [
+        "4 Forest",
+        "3 Swamp", 
+        "2x Sol Ring",  # Different quantity format
+        "Lightning Bolt",  # No quantity (should be 1)
+        "Forest",  # Duplicate (should combine with "4 Forest" for total 5)
+        "2 Island",
+    ]
+
+    result = await client.call_tool(
+        "analysis_analyze_commander_deck",
+        {"commander": "Atraxa, Praetors' Voice", "decklist": decklist},
+    )
+
+    response = result[0].text
+    import json
+
+    analysis = json.loads(response)
+
+    # Should have unique cards (Forest, Swamp, Sol Ring, Lightning Bolt, Island)
+    assert len(analysis["cards"]) == 5
+    
+    # Total deck cards should sum the quantities: 5+3+2+1+2 = 13
+    assert analysis["deck"]["deck_cards"] == 13
+    
+    # Check specific card quantities
+    forest_card = next(card for card in analysis["cards"] if card["name"] == "Forest")
+    assert forest_card["quantity"] == 5  # 4 + 1 from duplicates
+    
+    sol_ring_card = next(card for card in analysis["cards"] if card["name"] == "Sol Ring")
+    assert sol_ring_card["quantity"] == 2
+    
+    lightning_bolt_card = next(card for card in analysis["cards"] if card["name"] == "Lightning Bolt")
+    assert lightning_bolt_card["quantity"] == 1
+
+
+async def test_commander_analysis_with_commander_in_decklist(client):
+    """Test commander analysis when commander is included in the decklist."""
+    # Include the commander in the decklist - it should be automatically removed
+    decklist = [
+        "Atraxa, Praetors' Voice",  # This should be removed from the 99
+        "2 Atraxa, Praetors' Voice",  # Additional copies should also be removed
+        "Sol Ring",
+        "Lightning Bolt", 
+        "Forest",
+        "Island",
+    ]
+
+    result = await client.call_tool(
+        "analysis_analyze_commander_deck",
+        {"commander": "Atraxa, Praetors' Voice", "decklist": decklist},
+    )
+
+    response = result[0].text
+    import json
+
+    analysis = json.loads(response)
+
+    # Commander should not appear in the card list
+    commander_in_cards = any(card["name"] == "Atraxa, Praetors' Voice" for card in analysis["cards"])
+    assert not commander_in_cards, "Commander should not appear in the cards list"
+    
+    # Should have 4 unique cards (Sol Ring, Lightning Bolt, Forest, Island)
+    assert len(analysis["cards"]) == 4
+    
+    # Total deck cards should be 4 (excluding all commander copies)
+    assert analysis["deck"]["deck_cards"] == 4
+    
+    # Should indicate commander was in original list
+    assert analysis["deck"]["commander_in_original_list"]
+    assert analysis["deck"]["commander_quantity_removed"] == 3  # 1 + 2 copies removed
+
+
+async def test_commander_analysis_strategy_awareness(client):
+    """Test that commander analysis instructions encourage strategy awareness."""
+    decklist = [
+        "Sol Ring", "Lightning Bolt", "Forest", "Command Tower"
+    ]
+
+    result = await client.call_tool(
+        "analysis_analyze_commander_deck",
+        {
+            "commander": "Atraxa, Praetors' Voice", 
+            "decklist": decklist
+        },
+    )
+
+    response = result[0].text
+    import json
+
+    analysis = json.loads(response)
+    
+    # Should include strategy-aware instructions
+    requirements = analysis["instructions"]["requirements"]
+    strategy_mentioned = any("strategy" in req or "theme" in req for req in requirements)
+    assert strategy_mentioned
+    
+    # Should encourage looking for strategy clues
+    clues_mentioned = any("clues" in req for req in requirements)
+    assert clues_mentioned

@@ -1,9 +1,11 @@
-"""Commander-specific analysis tools and card categorization."""
+"""Commander-specific analysis tools providing card data for LLM categorization."""
 
 from fastmcp import FastMCP
 import httpx
 import json
-from typing import List, Set, Dict, Any
+import re
+from typing import List, Dict
+from collections import defaultdict
 from .utils import get_cached_card
 from .scryfall_server import batch_lookup_cards
 from config import config
@@ -13,109 +15,47 @@ commander_analysis_server: FastMCP = FastMCP(
 )
 
 
-def _categorize_cards_automatically(
-    found_cards: List[Dict[str, Any]],
-) -> Dict[str, List[str]]:
-    """Automatically categorize cards into Command Zone framework based on their properties."""
-    categories: Dict[str, List[str]] = {
-        "ramp": [],
-        "card_advantage": [],
-        "targeted_disruption": [],
-        "mass_disruption": [],
-        "lands": [],
-        "plan_cards": [],
-    }
-
-    for card_data in found_cards:
-        name = card_data.get("name", "")
-        type_line = card_data.get("type_line", "").lower()
-        oracle_text = card_data.get("oracle_text", "").lower()
-
-        # Lands category
-        if "land" in type_line:
-            categories["lands"].append(name)
+def parse_decklist_with_quantities(decklist: List[str]) -> Dict[str, int]:
+    """
+    Parse decklist entries that may include quantities.
+    
+    Handles formats like:
+    - "4 Forest" -> {"Forest": 4}  
+    - "Forest" -> {"Forest": 1}
+    - "2x Lightning Bolt" -> {"Lightning Bolt": 2}
+    
+    Args:
+        decklist: List of card entries with optional quantities
+        
+    Returns:
+        Dictionary mapping card names to quantities
+    """
+    card_quantities: Dict[str, int] = defaultdict(int)
+    
+    for entry in decklist:
+        entry = entry.strip()
+        if not entry:
             continue
-
-        # Ramp category - mana acceleration
-        if any(
-            keyword in oracle_text
-            for keyword in [
-                "add",
-                "mana",
-                "search",
-                "basic land",
-                "rampant growth",
-                "cultivate",
-                "sol ring",
-                "signet",
-                "talisman",
-                "arcane signet",
-                "chromatic lantern",
-            ]
-        ) and not any(
-            keyword in oracle_text for keyword in ["draw", "destroy", "counter"]
-        ):
-            categories["ramp"].append(name)
-
-        # Card advantage - draw and advantage
-        elif any(
-            keyword in oracle_text
-            for keyword in [
-                "draw",
-                "card",
-                "hand",
-                "library",
-                "exile.*play",
-                "impulse",
-                "scry 2 or more",
-            ]
-        ) and not any(keyword in oracle_text for keyword in ["discard", "destroy"]):
-            categories["card_advantage"].append(name)
-
-        # Targeted disruption - single target removal/interaction
-        elif any(
-            keyword in oracle_text
-            for keyword in [
-                "destroy target",
-                "exile target",
-                "counter target",
-                "return target",
-                "bounce",
-                "remove",
-                "path to exile",
-                "swords to plowshares",
-            ]
-        ):
-            categories["targeted_disruption"].append(name)
-
-        # Mass disruption - board wipes and mass effects
-        elif any(
-            keyword in oracle_text
-            for keyword in [
-                "destroy all",
-                "exile all",
-                "return all",
-                "wrath",
-                "board wipe",
-                "each player",
-                "each opponent",
-                "all creatures",
-                "all artifacts",
-            ]
-        ):
-            categories["mass_disruption"].append(name)
-
-        # Everything else goes to plan cards (win conditions, synergy, etc.)
+            
+        # Pattern to match quantity formats: "4 Card Name", "4x Card Name", or just "Card Name"
+        match = re.match(r'^(\d+)\s*x?\s+(.+)$', entry, re.IGNORECASE)
+        
+        if match:
+            quantity = int(match.group(1))
+            card_name = match.group(2).strip()
         else:
-            categories["plan_cards"].append(name)
-
-    return categories
+            quantity = 1
+            card_name = entry
+            
+        card_quantities[card_name] += quantity
+    
+    return dict(card_quantities)
 
 
 @commander_analysis_server.tool()
 async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
     """
-    Analyze Commander decks against the Command Zone template - automatically categorizes cards.
+    Fetch card data for Commander deck analysis - LLM categorizes cards and lists them by category.
 
     USE THIS TOOL when users ask about:
     - Commander deck analysis or review
@@ -123,88 +63,56 @@ async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
     - Command Zone template evaluation
     - "How good is my deck?" questions
 
-    This tool automatically:
-    1. Looks up all cards using Scryfall
-    2. Categorizes them into Command Zone framework
-    3. Provides balance assessment and recommendations
+    This tool provides:
+    1. Commander card data (name, colors, type, text)
+    2. All deck card data with relevant properties
+    3. Command Zone framework targets for reference
+    4. Detailed instructions for LLM to categorize and list cards by category
+
+    The LLM will categorize cards and MUST list specific cards in each category.
+    CRITICAL: Cards should appear in MULTIPLE categories when they serve multiple functions:
+    - Ramp (target: 10-12+ cards) - mana acceleration and fixing
+    - Card Advantage (target: 12+ cards) - card draw and selection
+    - Targeted Disruption (target: 12 cards) - single-target removal/interaction
+    - Mass Disruption (target: 6 cards) - board wipes and mass effects
+    - Lands (target: 38 cards) - all land cards
+    - Plan Cards (target: ~30 cards) - theme/strategy cards
+
+    Expected LLM output format: "Category (X/Y): card1, card2, card3..."
+    Multi-category examples: Skullclamp (Card Advantage + Targeted Disruption), 
+    Cultivate (Ramp + Card Advantage), Beast Within (Targeted Disruption + Ramp)
 
     Args:
         commander: The commander card name (e.g. "Atraxa, Praetors' Voice")
         decklist: List of 99 card names in the deck (excluding commander)
 
-    Returns: JSON object with structured analysis including:
-        - commander: name, colors, color identity
+    Returns: JSON object with card data for analysis including:
+        - commander: name, colors, color identity, type, oracle text
         - deck: card counts and format validation
-        - categories: Command Zone analysis with counts and status
-        - balance_assessment: overall deck balance score
-        - recommendations: priority improvements and efficiency notes
-        - categorization: automatically sorted cards by category
+        - cards: list of all cards with name, type, oracle text, mana cost, colors
+        - command_zone_targets: reference targets for each category
+        - instructions: detailed requirements for LLM categorization and formatting
     """
     if not commander or not decklist:
         return "Error: Both commander and decklist are required."
 
+    # Parse decklist with quantities
+    card_quantities = parse_decklist_with_quantities(decklist)
+    unique_card_names = list(card_quantities.keys())
+    
     # Look up commander first
     async with httpx.AsyncClient() as client:
         commander_data = await get_cached_card(client, commander.strip())
         if not commander_data:
             return f"Error: Could not find commander '{commander}'. Please check the spelling."
 
-        # Look up all cards in the decklist using batch operations
-        found_cards, not_found = await batch_lookup_cards(client, decklist)
+        # Look up all unique cards in the decklist using batch operations
+        found_cards, not_found = await batch_lookup_cards(client, unique_card_names)
 
         if not_found:
             return f"Error: Could not find the following cards: {', '.join(not_found[:10])}{'...' if len(not_found) > 10 else ''}. Please check spellings."
 
-        # Automatically categorize cards based on their properties
-        categorized_cards = _categorize_cards_automatically(found_cards)
-    # Initialize categories with Command Zone template targets
-    cz = config.command_zone
-    categories: Dict[str, Dict[str, Any]] = {
-        "Ramp": {
-            "cards": categorized_cards["ramp"],
-            "target": cz.ramp_target,
-            "target_range": f"{cz.ramp_target}-{cz.ramp_optimal}+",
-            "min_target": cz.ramp_target,
-            "optimal_target": cz.ramp_optimal,
-        },
-        "Card Advantage": {
-            "cards": categorized_cards["card_advantage"],
-            "target": cz.card_advantage_target,
-            "target_range": f"{cz.card_advantage_target}+",
-            "min_target": cz.card_advantage_target,
-            "optimal_target": cz.card_advantage_optimal,
-        },
-        "Targeted Disruption": {
-            "cards": categorized_cards["targeted_disruption"],
-            "target": cz.targeted_disruption_target,
-            "target_range": str(cz.targeted_disruption_target),
-            "min_target": cz.targeted_disruption_target,
-            "optimal_target": cz.targeted_disruption_target,
-        },
-        "Mass Disruption": {
-            "cards": categorized_cards["mass_disruption"],
-            "target": cz.mass_disruption_target,
-            "target_range": str(cz.mass_disruption_target),
-            "min_target": cz.mass_disruption_target,
-            "optimal_target": cz.mass_disruption_target,
-        },
-        "Lands": {
-            "cards": categorized_cards["lands"],
-            "target": cz.lands_target,
-            "target_range": str(cz.lands_target),
-            "min_target": cz.lands_target - 2,
-            "optimal_target": cz.lands_target,
-        },
-        "Plan Cards": {
-            "cards": categorized_cards["plan_cards"],
-            "target": cz.plan_cards_target,
-            "target_range": f"~{cz.plan_cards_target}",
-            "min_target": cz.plan_cards_target - 5,
-            "optimal_target": cz.plan_cards_target + 5,
-        },
-    }
-
-    # Add commander info to results
+    # Extract commander info
     commander_name = commander_data.get("name", commander)
     commander_colors = commander_data.get("color_identity", [])
     color_names = []
@@ -213,176 +121,122 @@ async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
         if color in color_map:
             color_names.append(color_map[color])
 
-    total_cards = len(decklist) + 1  # Including commander
+    # Check if commander is in the decklist and remove it
+    commander_in_deck = False
+    commander_quantity_in_deck = 0
+    
+    for card_data in found_cards:
+        card_name = card_data.get("name", "")
+        if card_name == commander_name:
+            commander_in_deck = True
+            commander_quantity_in_deck = card_quantities.get(card_name, 1)
+            # Remove commander from quantities
+            del card_quantities[card_name]
+            break
+    
+    # Prepare card data for LLM analysis with quantities (excluding commander)
+    cards_data = []
+    total_deck_cards = 0
+    
+    for card_data in found_cards:
+        card_name = card_data.get("name", "")
+        
+        # Skip commander - it shouldn't be in the 99
+        if card_name == commander_name:
+            continue
+            
+        quantity = card_quantities.get(card_name, 0)
+        if quantity == 0:  # Card was removed (commander) or not found
+            continue
+            
+        total_deck_cards += quantity
+        
+        card_info = {
+            "name": card_name,
+            "quantity": quantity,
+            "type_line": card_data.get("type_line", ""),
+            "oracle_text": card_data.get("oracle_text", ""),
+            "mana_cost": card_data.get("mana_cost", ""),
+            "cmc": card_data.get("cmc", 0),
+            "colors": card_data.get("colors", []),
+            "color_identity": card_data.get("color_identity", [])
+        }
+        cards_data.append(card_info)
 
-    # Build analysis result
-    result = ["**Command Zone Deck Analysis:**"]
-    result.append(f"**Commander:** {commander_name}")
-    if color_names:
-        result.append(f"**Colors:** {'/'.join(color_names)}")
-    result.append(f"**Deck Size:** {total_cards} cards (including commander)")
-    result.append("")
+    # Get Command Zone targets from config
+    cz = config.command_zone
+    command_zone_targets = {
+        "Ramp": {
+            "target": cz.ramp_target,
+            "optimal": cz.ramp_optimal,
+            "description": "Mana acceleration and fixing (Sol Ring, Cultivate, etc.)"
+        },
+        "Card Advantage": {
+            "target": cz.card_advantage_target,
+            "optimal": cz.card_advantage_optimal,
+            "description": "Card draw and selection (Rhystic Study, Phyrexian Arena, etc.)"
+        },
+        "Targeted Disruption": {
+            "target": cz.targeted_disruption_target,
+            "optimal": cz.targeted_disruption_target,
+            "description": "Single-target removal/interaction (Swords to Plowshares, Counterspell, etc.)"
+        },
+        "Mass Disruption": {
+            "target": cz.mass_disruption_target,
+            "optimal": cz.mass_disruption_target,
+            "description": "Board wipes and mass effects (Wrath of God, Cyclonic Rift, etc.)"
+        },
+        "Lands": {
+            "target": cz.lands_target,
+            "optimal": cz.lands_target,
+            "description": "All land cards including basics and nonbasics"
+        },
+        "Plan Cards": {
+            "target": cz.plan_cards_target,
+            "optimal": cz.plan_cards_target + 5,
+            "description": "Theme/strategy cards that advance your deck's game plan"
+        }
+    }
 
-    # Analyze each category with Command Zone framework
-    total_variance = 0
-    problem_categories = []
-    efficiency_notes = []
-
-    for category_name, data in categories.items():
-        count = len(data["cards"])
-        min_target = data["min_target"]
-        optimal_target = data["optimal_target"]
-        target_range = data["target_range"]
-
-        # Determine status using Command Zone guidelines
-        status = ""
-        if count >= optimal_target:
-            status = " ✓"
-        elif count >= min_target:
-            status = " ⚡"
-        else:
-            status = " ⚠️"
-            problem_categories.append(f"{category_name} ({count} vs {target_range})")
-
-        # Special handling for key categories
-        if category_name == "Card Advantage" and count >= 15:
-            status = " ✓"
-            efficiency_notes.append(
-                f"Excellent card advantage consistency ({count} cards)"
-            )
-        elif category_name == "Ramp" and count >= 12:
-            status = " ✓"
-            efficiency_notes.append(f"Strong ramp consistency ({count} cards)")
-
-        variance = abs(count - min_target)
-        total_variance += variance
-
-        result.append(
-            f"**{category_name}: {count} cards**{status} (Target: {target_range})"
-        )
-
-        # Show sample cards with more context
-        if data["cards"]:
-            card_sample = data["cards"][:6]  # Show more cards for better context
-            cards_text = ", ".join(card_sample)
-            if len(data["cards"]) > 6:
-                cards_text += f"... (+{len(data['cards']) - 6} more)"
-            result.append(f"  {cards_text}")
-        else:
-            result.append("  No cards provided in this category")
-        result.append("")
-
-    # Overall assessment with Command Zone principles
-    result.append("**Overall Assessment:**")
-
-    # Calculate how many categories meet minimum requirements
-    categories_meeting_min = sum(
-        1 for data in categories.values() if len(data["cards"]) >= data["min_target"]
-    )
-    total_categories = len(categories)
-
-    if categories_meeting_min == total_categories:
-        result.append("✓ Excellent deck balance following Command Zone framework")
-        result.append(
-            "All categories meet minimum requirements for functional gameplay"
-        )
-    elif categories_meeting_min >= total_categories - 1:
-        result.append("⚡ Strong deck foundation with minor gaps to address")
-    elif categories_meeting_min >= total_categories - 2:
-        result.append("⚡ Decent foundation but needs attention in key areas")
-    else:
-        result.append("⚠️ Major structural issues - deck may struggle with consistency")
-        result.append("Focus on fundamentals: ramp, draw, interaction, and lands")
-
-    # Add efficiency highlights
-    if efficiency_notes:
-        result.append("\n**Efficiency Highlights:**")
-        for note in efficiency_notes:
-            result.append(f"✓ {note}")
-
-    # Priority recommendations
-    if problem_categories:
-        result.append("\n**Priority Improvements:**")
-        for i, category in enumerate(problem_categories[:3], 1):  # Top 3 priorities
-            result.append(f"{i}. {category}")
-
-    # Card overlap guidance
-    total_categorized_cards = sum(len(data["cards"]) for data in categories.values())
-    if total_categorized_cards > total_cards * 1.2:  # Good overlap
-        result.append(
-            "\n✓ Good card overlap - many cards serve multiple roles (recommended)"
-        )
-    elif total_categorized_cards < total_cards * 1.1:  # Low overlap
-        result.append(
-            "\n⚡ Consider cards that serve multiple roles (Modal Double-Faced Cards, ETB creatures, modal spells)"
-        )
-
-    # Commander format validation
-    if total_cards != 99:
-        result.append(
-            f"\n⚠️ Deck should have 99 cards (excluding commander), found {total_cards}"
-        )
-        if total_cards < 99:
-            result.append("Missing cards may indicate incomplete deck list")
-        else:
-            result.append("Excess cards need to be cut to 99")
-
-    # Build structured JSON response
+    # Build structured JSON response with card data for LLM analysis
     analysis_result = {
         "commander": {
             "name": commander_name,
+            "type_line": commander_data.get("type_line", ""),
+            "oracle_text": commander_data.get("oracle_text", ""),
             "colors": color_names,
             "color_identity": commander_colors,
+            "mana_cost": commander_data.get("mana_cost", ""),
+            "cmc": commander_data.get("cmc", 0)
         },
         "deck": {
-            "total_cards": total_cards + 1,  # Including commander
-            "deck_cards": total_cards,  # Excluding commander
-            "format_valid": total_cards == 99,
+            "total_cards": total_deck_cards + 1,  # Including commander
+            "deck_cards": total_deck_cards,  # Excluding commander
+            "unique_cards": len(cards_data),  # Only non-commander cards
+            "format_valid": total_deck_cards == 99,
+            "commander_in_original_list": commander_in_deck,
+            "commander_quantity_removed": commander_quantity_in_deck if commander_in_deck else 0
         },
-        "categories": {},
-        "balance_assessment": {
-            "overall_score": "excellent"
-            if categories_meeting_min == total_categories
-            else "good"
-            if categories_meeting_min >= total_categories - 1
-            else "needs_improvement",
-            "categories_meeting_targets": categories_meeting_min,
-            "total_categories": total_categories,
-        },
-        "recommendations": {
-            "priority_improvements": problem_categories[:3],
-            "efficiency_notes": efficiency_notes,
-            "card_overlap_status": "good"
-            if total_categorized_cards > total_cards * 1.2
-            else "low"
-            if total_categorized_cards < total_cards * 1.1
-            else "moderate",
-        },
-        "categorization": categorized_cards,
-    }
-
-    # Add category analysis
-    for category_name, data in categories.items():
-        count = len(data["cards"])
-        min_target = data["min_target"]
-        optimal_target = data["optimal_target"]
-        target_range = data["target_range"]
-
-        status = (
-            "optimal"
-            if count >= optimal_target
-            else "adequate"
-            if count >= min_target
-            else "insufficient"
-        )
-
-        analysis_result["categories"][category_name] = {
-            "count": count,
-            "target_range": target_range,
-            "min_target": min_target,
-            "optimal_target": optimal_target,
-            "status": status,
-            "cards": data["cards"][:10],  # Show first 10 cards as examples
+        "cards": cards_data,
+        "command_zone_targets": command_zone_targets,
+        "instructions": {
+            "task": "Categorize the provided cards into Command Zone framework categories and provide detailed analysis",
+            "categories": list(command_zone_targets.keys()),
+            "requirements": [
+                "MUST list the specific cards you assigned to each category",
+                "MUST show card counts for each category with target comparisons", 
+                "MUST use the format: 'Category (X/Y): card1, card2, card3...' where X is current count and Y is target",
+                "CRITICAL: Cards can and should belong to multiple categories - count them in EVERY relevant category",
+                "IMPORTANT: Look for clues about the deck's strategy in the user's original request or card choices - consider this when categorizing Plan Cards",
+                "MUST provide improvement recommendations with specific card suggestions that fit the apparent deck strategy",
+                "Explain your reasoning for borderline categorization decisions, especially how cards relate to the deck's apparent theme/strategy",
+                "Consider card quantities when analyzing deck balance",
+                "Examples of multi-category cards: Skullclamp (Card Advantage + can kill small creatures), Cultivate (Ramp + Card Advantage), Beast Within (Targeted Disruption + gives opponent Ramp), Deadly Dispute (Card Advantage + requires sacrifice), Pitiless Plunderer (Ramp when creatures die + Plan Card), Idol of Oblivion (Card Advantage + Plan Card for token decks)"
+            ],
+            "example_format": "Ramp (7/10-12): Sol Ring, Cultivate, Nature's Lore, Arcane Signet...",
+            "multi_category_reminder": "IMPORTANT: Many cards serve multiple functions! Count them in ALL applicable categories. For example: Skullclamp should appear in BOTH Card Advantage AND potentially Targeted Disruption (if you consider equipment that kills creatures as removal).",
+            "note": "Be specific about which cards you categorized where, and explain any borderline decisions. DO NOT try to put each card in only one category - versatile cards should appear in multiple categories."
         }
+    }
 
     return json.dumps(analysis_result, indent=2)

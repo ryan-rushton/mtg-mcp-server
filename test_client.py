@@ -3,6 +3,7 @@ Simple interactive demo client for the MTG MCP Server.
 
 This is a minimal demonstration of the server functionality.
 For comprehensive testing, use the pytest suite in the tests/ directory.
+For integration tests with real network requests, run: uv run pytest tests/test_integration.py
 """
 
 import asyncio
@@ -14,6 +15,8 @@ client: Client = Client("server.py")
 async def demo_basic_functionality():
     """Demo basic server functionality with a few example cards."""
     print("=== MTG MCP Server Demo ===")
+    print("Note: This demo uses cached data. For full integration tests with")
+    print("real network requests, run: uv run pytest tests/test_integration.py")
 
     async with client:
         # Demo card lookup
@@ -45,8 +48,34 @@ async def demo_basic_functionality():
         if result and hasattr(result[0], "text"):
             print(result[0].text)
 
+        # Demo commander analysis with quantities
+        print("\n3. Analyzing a sample Commander deck with quantities...")
+        result = await client.call_tool(
+            "analysis_analyze_commander_deck",
+            {
+                "commander": "Atraxa, Praetors' Voice",
+                "decklist": [
+                    "4 Forest", "3 Island", "2x Sol Ring", 
+                    "Lightning Bolt", "Forest",  # This should combine to 5 Forest total
+                    "Command Tower", "Cultivate"
+                ]
+            },
+        )
+        if result and hasattr(result[0], "text"):
+            import json
+            try:
+                analysis = json.loads(result[0].text)
+                print(f"Commander: {analysis['commander']['name']}")
+                print(f"Total deck cards: {analysis['deck']['deck_cards']}")
+                print(f"Unique cards: {analysis['deck']['unique_cards']}")
+                print("Cards with quantities:")
+                for card in analysis['cards'][:5]:  # Show first 5
+                    print(f"  {card['quantity']}x {card['name']}")
+            except json.JSONDecodeError:
+                print(result[0].text[:400] + "...")
+
         # Demo search functionality
-        print("\n3. Searching for dragons...")
+        print("\n4. Searching for dragons...")
         result = await client.call_tool(
             "scryfall_search_cards_by_criteria", {"name": "dragon", "limit": 3}
         )
@@ -99,7 +128,9 @@ async def main():
         if run_interactive in ["y", "yes"]:
             await interactive_mode()
 
-        print("\nDemo complete! For comprehensive testing, run: uv run pytest")
+        print("\nDemo complete!")
+        print("For unit tests, run: uv run pytest")
+        print("For integration tests with real network requests, run: uv run pytest tests/test_integration.py")
 
     except Exception as e:
         print(f"Error running demo: {e}")
