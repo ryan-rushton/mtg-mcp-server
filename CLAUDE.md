@@ -32,6 +32,8 @@ The server uses a **modular architecture** with separated concerns across multip
 **Testing:**
 
 - `uv run python test_client.py` - Run interactive demo (optional, shows server functionality)
+- `uv run pytest tests/test_integration.py` - Run integration tests with live Scryfall API
+- `uv run pytest tests/` - Run all tests including unit and integration tests
 
 ## Architecture
 
@@ -140,6 +142,21 @@ The tool takes two parameters: `commander` and `decklist`. It provides:
 
 The LLM should analyze the card data and categorize cards based on their properties, then provide deck balance assessment and improvement recommendations.
 
+## Deck List Format Support
+
+The server handles multiple standard Magic deck list formats:
+
+**Quantity Parsing Examples:**
+- `4 Lightning Bolt` → 4 copies of Lightning Bolt
+- `2x Sol Ring` → 2 copies of Sol Ring  
+- `Forest` → 1 copy of Forest (default quantity)
+- `1 Rhystic Study` → 1 copy of Rhystic Study
+
+**Commander Deck Format:**
+- Expects exactly 100 cards total (including commander)
+- Commander should be specified separately from the 99-card deck list
+- Supports both named quantities and implicit singles
+
 ## Key Patterns
 
 - **Unified Caching**: All API calls use shared caching infrastructure to minimize Scryfall requests
@@ -189,6 +206,28 @@ All configuration is centralized in `config.py` with these key settings:
 - `analysis_calculate_mana_curve` - Simple CMC distribution
 - `analysis_analyze_lands` - Basic land count and color production
 - `analysis_analyze_card_types` - Card type breakdown with guidelines
+
+## Claude Desktop Integration
+
+This server is designed for use with Claude Desktop via MCP. Add to your Claude Desktop configuration:
+
+```json
+{
+  "mcpServers": {
+    "mtg-analysis": {
+      "command": "uv",
+      "args": ["run", "python", "/absolute/path/to/mtg-mcp-server/server.py"],
+      "cwd": "/absolute/path/to/mtg-mcp-server"
+    }
+  }
+}
+```
+
+**Important Notes:**
+- Use absolute paths in the configuration
+- Ensure `uv` is available in your system PATH
+- Restart Claude Desktop after configuration changes
+- The server runs in STDIO transport mode for MCP communication
 
 ## Dependencies
 
