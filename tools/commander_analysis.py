@@ -8,6 +8,7 @@ from typing import List, Dict
 from collections import defaultdict
 from .utils import get_cached_card
 from .scryfall_server import batch_lookup_cards
+from .validation import FormatValidator
 from config import config
 
 commander_analysis_server: FastMCP = FastMCP(
@@ -52,8 +53,7 @@ def parse_decklist_with_quantities(decklist: List[str]) -> Dict[str, int]:
     return dict(card_quantities)
 
 
-@commander_analysis_server.tool()
-async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
+async def _analyze_commander_deck_core(commander: str, decklist: List[str]) -> str:
     """
     Fetch card data for Commander deck analysis - LLM categorizes cards and lists them by category.
 
@@ -96,7 +96,19 @@ async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
     if not commander or not decklist:
         return "Error: Both commander and decklist are required."
 
-    # Parse decklist with quantities
+    # Perform comprehensive validation first
+    validator = FormatValidator("Commander")
+    validation_result = validator.validate_full_deck(commander, decklist)
+    
+    # Check for critical validation failures that prevent analysis
+    critical_errors = [error for error in validation_result.errors 
+                      if "Commander is required" in error or "Decklist cannot be empty" in error]
+    
+    if critical_errors and config.validation.strict_mode:
+        error_summary = "; ".join(critical_errors)
+        return f"Error: Critical validation failures prevent analysis: {error_summary}"
+    
+    # Parse decklist with quantities (using the validation result if available)
     card_quantities = parse_decklist_with_quantities(decklist)
     unique_card_names = list(card_quantities.keys())
     
@@ -219,16 +231,24 @@ async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
         },
         "cards": cards_data,
         "command_zone_targets": command_zone_targets,
+        "validation": {
+            "is_valid": validation_result.is_valid,
+            "errors": validation_result.errors if config.validation.include_warnings_in_output else [],
+            "warnings": validation_result.warnings if config.validation.include_warnings_in_output else [],
+            "summary": "Validation passed" if validation_result.is_valid else f"{len(validation_result.errors)} validation errors found"
+        },
         "instructions": {
             "task": "Categorize the provided cards into Command Zone framework categories and provide detailed analysis",
             "categories": list(command_zone_targets.keys()),
             "requirements": [
+                "MUST review the validation section first - address any errors or warnings in your analysis",
                 "MUST list the specific cards you assigned to each category",
                 "MUST show card counts for each category with target comparisons", 
                 "MUST use the format: 'Category (X/Y): card1, card2, card3...' where X is current count and Y is target",
                 "CRITICAL: Cards can and should belong to multiple categories - count them in EVERY relevant category",
                 "IMPORTANT: Look for clues about the deck's strategy in the user's original request or card choices - consider this when categorizing Plan Cards",
                 "MUST provide improvement recommendations with specific card suggestions that fit the apparent deck strategy",
+                "If validation errors exist, prioritize recommendations that address format compliance issues",
                 "Explain your reasoning for borderline categorization decisions, especially how cards relate to the deck's apparent theme/strategy",
                 "Consider card quantities when analyzing deck balance",
                 "Examples of multi-category cards: Skullclamp (Card Advantage + can kill small creatures), Cultivate (Ramp + Card Advantage), Beast Within (Targeted Disruption + gives opponent Ramp), Deadly Dispute (Card Advantage + requires sacrifice), Pitiless Plunderer (Ramp when creatures die + Plan Card), Idol of Oblivion (Card Advantage + Plan Card for token decks)"
@@ -240,3 +260,23 @@ async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
     }
 
     return json.dumps(analysis_result, indent=2)
+
+
+@commander_analysis_server.tool()
+async def analyze_commander_deck(commander: str, decklist: List[str]) -> str:
+    """
+    Fetch card data for Commander deck analysis - LLM categorizes cards and lists them by category.
+
+    USE THIS TOOL when users ask about:
+    - Commander deck analysis or review
+    - Deck balance or improvement suggestions  
+    - Command Zone template evaluation
+    - "How good is my deck?" questions
+
+    Args:
+        commander: The commander card name (e.g. "Atraxa, Praetors' Voice")
+        decklist: List of 99 card names in the deck (excluding commander)
+
+    Returns: JSON object with card data for analysis
+    """
+    return await _analyze_commander_deck_core(commander, decklist)

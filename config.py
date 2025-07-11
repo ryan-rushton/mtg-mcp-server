@@ -38,12 +38,33 @@ class CacheConfig:
 
 
 @dataclass
+class ValidationConfig:
+    """Configuration for deck validation and robustness features."""
+
+    # Validation strictness
+    strict_mode: bool = False  # If True, warnings become errors
+    enable_format_validation: bool = True
+    enable_quantity_validation: bool = True
+    
+    # Quantity limits
+    max_card_quantity: int = 100  # Maximum quantity per card
+    max_card_name_length: int = 200  # Maximum card name length
+    min_deck_size: int = 10  # Minimum deck size warning threshold
+    
+    # Error handling
+    max_validation_errors: int = 50  # Stop validation after this many errors
+    include_warnings_in_output: bool = True
+    detailed_error_messages: bool = True
+
+
+@dataclass
 class ServerConfig:
     """Main server configuration combining all subsystem configs."""
 
     scryfall: ScryfallConfig = field(default_factory=ScryfallConfig)
     command_zone: CommandZoneConfig = field(default_factory=CommandZoneConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
 
 
 # Global configuration instance
